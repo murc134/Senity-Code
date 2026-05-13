@@ -2,35 +2,49 @@
 # ══════════════════════════════════════════════════════════════
 # claude-msh — Claude Code gegen Self-Hosted Modelle (Linux/macOS)
 #
-# Spricht das oeffentliche Gateway https://gateway.missionstarkeshandwerk.de
-# (Caddy → cc-adapter:8765 fuer /v1/messages, sonst LiteLLM:4000).
-# Auth ueber LITELLM_MASTER_KEY (env-var oder ~/.config/claude-msh/auth).
+# Liest .env aus dem eigenen Verzeichnis und leitet auf MSH vLLM
+# oder Gateway um. Primar: direkter vLLM-Endpoint (thinking support).
 #
 # Usage:
 #   claude-msh                        Default-Modell qwen3.6
-#   claude-msh "frag mich was"        Argumente werden an `claude` durchgereicht
-#   claude-msh -m gpt-4o "..."        Modell waehlen (siehe `claude-msh --list`)
-#   claude-msh --list                 Verfuegbare Modelle vom Gateway abfragen
-#   claude-msh -e <url> ...           Anderen Endpoint (z.B. http://localhost:11434)
+#   claude-msh "frag mich was"        Argumente an claude weiterleiten
+#   claude-msh -m gpt-4o "..."        Modell waehlen
 #
-# Voraussetzung: `claude` CLI installiert (npm install -g @anthropic-ai/claude-code).
+# Voraussetzung: claude CLI installiert + .env im Script-Verzeichnis.
 # ══════════════════════════════════════════════════════════════
 set -euo pipefail
 
-GATEWAY_URL_DEFAULT="https://gateway.missionstarkeshandwerk.de"
-MODEL_DEFAULT="qwen3.6"
-AUTH_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/claude-msh/auth"
+# ── Script-Verzeichnis ermitteln ──
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${SCRIPT_DIR}/.env"
 
-GATEWAY_URL="${CLAUDE_MSH_URL:-$GATEWAY_URL_DEFAULT}"
-MODEL="$MODEL_DEFAULT"
+# ── .env parsen ──
+declare -A ENV_VARS=()
+if [[ -f "$ENV_FILE" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="$(echo "$line" | sed 's/#.*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        if [[ "$line" =~ ^([^=]+)=(.*)$ ]]; then
+            key="${BASH_REMATCH[1]}"
+            val="${BASH_REMATCH[2]}"
+            key="$(echo "$key" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
+            val="$(echo "$val" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
+            ENV_VARS["$key"]="$val"
+        fi
+    done < "$ENV_FILE"
+fi
+
+# ── Werte aus .env ──
+MODEL="${1:-}"
 LIST_ONLY=0
 EXTRA=()
+GATEWAY_URL="${CLAUDE_MSH_URL:-${ENV_VARS[MSH_API_URL]:-https://gateway.missionstarkeshandwerk.de}}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -m|--model)    MODEL="$2"; shift 2 ;;
+        -m|--model)  MODEL="$2"; shift 2 ;;
         -e|--endpoint) GATEWAY_URL="$2"; shift 2 ;;
-        -l|--list)     LIST_ONLY=1; shift ;;
+        -l|--list)   LIST_ONLY=1; shift ;;
         -h|--help)
             sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
@@ -38,21 +52,36 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-TOKEN="${LITELLM_MASTER_KEY:-${ANTHROPIC_AUTH_TOKEN:-}}"
-if [[ -z "$TOKEN" && -f "$AUTH_FILE" ]]; then
-    TOKEN="$(tr -d '[:space:]' < "$AUTH_FILE")"
-fi
+# Token: vLLM zuerst, dann Gateway
+TOKEN="${ENV_VARS[MSH_VLLM_API_KEY]:-${LITELLM_MASTER_KEY:-${ENV_VARS[MSH_API_KEY]:-}}}"
 
 if [[ -z "$TOKEN" ]]; then
     cat >&2 <<EOF
 FEHLER: Kein Auth-Token gefunden.
 
-Setz die Env-Variable LITELLM_MASTER_KEY, oder schreib den Key nach:
-    $AUTH_FILE   (chmod 600)
+Pruefe .env im Script-Verzeichnis: $ENV_FILE
 
-Den Key findest du auf opus in /home/msh/gateway-stack/.env (LITELLM_MASTER_KEY=...).
+Oder setz die Env-Variable: LITELLM_MASTER_KEY
 EOF
     exit 1
+fi
+
+VLLM_URL="${ENV_VARS[MSH_VLLM_URL]:-}"
+MODEL_DEFAULT="${ENV_VARS[MSH_VLLM_MODEL]:-qwen3.6}"
+
+if [[ -z "$MODEL" ]]; then
+    if [[ -n "$VLLM_URL" ]]; then
+        MODEL="$MODEL_DEFAULT"
+    else
+        MODEL="qwen3.6"
+    fi
+fi
+
+# Endpoint: vLLM primar, Fallback Gateway
+if [[ -z "$GATEWAY_URL" || "$GATEWAY_URL" == *"missionstarkeshandwerk.de" ]]; then
+    if [[ -n "$VLLM_URL" ]]; then
+        GATEWAY_URL="$VLLM_URL"
+    fi
 fi
 
 if [[ "$LIST_ONLY" == "1" ]]; then
@@ -71,8 +100,19 @@ EOF
     exit 1
 fi
 
-export ANTHROPIC_BASE_URL="$GATEWAY_URL"
-export ANTHROPIC_AUTH_TOKEN="$TOKEN"
-export ANTHROPIC_API_KEY="$TOKEN"
+# vLLM nutzt OpenAI-kompatibles Format
+if [[ "$GATEWAY_URL" == *"$VLLM_URL"* && -n "$VLLM_URL" ]]; then
+    export OPENAI_BASE_URL="$GATEWAY_URL"
+    export OPENAI_API_KEY="$TOKEN"
+    unset ANTHROPIC_BASE_URL 2>/dev/null || true
+    unset ANTHROPIC_AUTH_TOKEN 2>/dev/null || true
+    unset ANTHROPIC_API_KEY 2>/dev/null || true
+else
+    export ANTHROPIC_BASE_URL="$GATEWAY_URL"
+    export ANTHROPIC_API_KEY="$TOKEN"
+    unset ANTHROPIC_AUTH_TOKEN 2>/dev/null || true
+    unset OPENAI_BASE_URL 2>/dev/null || true
+    unset OPENAI_API_KEY 2>/dev/null || true
+fi
 
 exec claude --model "$MODEL" "${EXTRA[@]}"
