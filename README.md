@@ -1,121 +1,99 @@
-# claude-msh
+# Senity Workspace — Docker-basierter Claude Code
 
-CLI-Shortcut, der Claude Code gegen die Self-Hosted MSH-Modelle laufen laesst.
-Spricht das oeffentliche Gateway `https://gateway.missionstarkeshandwerk.de` —
-**kein SSH-Tunnel, kein Docker noetig**, nur die Claude Code CLI plus ein
-Auth-Token.
+Startet Claude Code in einem Docker Container — universell auf Windows, Linux und macOS.
 
-## Was das Script macht
-
-1. Liest den Auth-Token (`LITELLM_MASTER_KEY`) aus Env-Var oder Config-Datei.
-2. Setzt `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`.
-3. Startet `claude --model <gewaehlt>` und reicht alle weiteren Args durch.
-
-## Voraussetzungen
-
-- Node.js + Claude Code:
-  ```bash
-  npm install -g @anthropic-ai/claude-code
-  ```
-- Auth-Token. Steht auf opus in `/home/msh/gateway-stack/.env` unter
-  `LITELLM_MASTER_KEY=`. Beginnt mit `sk-msh-local-…`.
-
-## Installation auf Linux / macOS / opus
-
-```bash
-# 1. Script global verfuegbar machen
-sudo cp scripts/claude-msh/claude-msh.sh /usr/local/bin/claude-msh
-sudo chmod +x /usr/local/bin/claude-msh
-
-# 2. Token einmalig hinterlegen — eine der beiden Varianten:
-
-# Variante A: Env-Var in ~/.bashrc oder ~/.zshrc
-echo 'export LITELLM_MASTER_KEY="sk-msh-local-..."' >> ~/.bashrc
-
-# Variante B: Config-Datei (chmod 600)
-mkdir -p ~/.config/claude-msh
-echo 'sk-msh-local-...' > ~/.config/claude-msh/auth
-chmod 600 ~/.config/claude-msh/auth
-
-# 3. Test
-claude-msh --list           # Modelle vom Gateway
-claude-msh                  # startet Claude Code mit qwen3.6
-```
-
-Auf opus selbst: gleiche Schritte, der Endpoint zeigt eh auf den lokalen
-Caddy → Gateway. Wenn du lokal direkt am LiteLLM andocken willst, geht auch
-`claude-msh -e http://127.0.0.1:4000`.
-
-## Installation auf Windows
+## Schnellstart
 
 ```powershell
-# 1. Token als User-Env-Var setzen (PowerShell als normaler User reicht)
-[Environment]::SetEnvironmentVariable('LITELLM_MASTER_KEY','sk-msh-local-...','User')
+# 1. Setup ausfuehren
+.\setup.bat
 
-# 2. Script-Ordner ins PATH aufnehmen — z.B. nach %USERPROFILE%\bin kopieren
-mkdir "$env:USERPROFILE\bin" -ErrorAction SilentlyContinue
-copy scripts\claude-msh\claude-msh.bat "$env:USERPROFILE\bin\"
-copy scripts\claude-msh\claude-msh.ps1 "$env:USERPROFILE\bin\"
+# 2. Modus waehlen
+#    1) MSH Gateway (qwen3.6 vom Missionstarkeshandwerk — vLLM, am schnellsten)
+#    2) Eigenes Anthropic (Pro/Team API-Key)
+#    3) Ollama lokal
 
-# Pfad einmalig in User-PATH ergaenzen, falls noch nicht drin:
-$old = [Environment]::GetEnvironmentVariable('Path','User')
-if ($old -notlike "*$env:USERPROFILE\bin*") {
-    [Environment]::SetEnvironmentVariable('Path', "$old;$env:USERPROFILE\bin", 'User')
-}
-
-# 3. Neues Terminal oeffnen (damit PATH + Env-Var greifen)
-# 4. Test
-claude-msh -List
-claude-msh
+# 3. Loslegen
+.\claude-msh.bat
 ```
 
-Alternative ohne PATH: einfach `claude-msh.bat` per Doppelklick oder via
-voll qualifiziertem Pfad starten.
+## Was das macht
 
-## Verwendung
+1. Prueft Docker Desktop
+2. Baut das Docker Image `senity-claude:latest`
+3. Prueft/erstellt Bindings.md
+4. Waehlt die Modell-Quelle
+5. Startet Claude Code im Container mit allen Mounts
+
+## Verfigbare Modus
+
+| Modus | Modell | Quelle | Token |
+|---|---|---|---|
+| `msh` (Default) | qwen3.6 | vLLM `vllm.missionstarkeshandwerk.de` | `.env` MSH_API_KEY |
+| `anthropic` | claude-sonnet-4-6 | Echte Anthropic API | `ANTHROPIC_API_KEY` Env |
+| `ollama` | freiwaehlbbar | Lokaler Ollama | `ollama` (kein Token) |
+
+Manuellen Modus waehlen:
 
 ```bash
-claude-msh                           # Default-Modell qwen3.6
-claude-msh -m gpt-4o                 # anderes Modell waehlen
-claude-msh -m gemini-2.5-pro
-claude-msh -m qwen3-coder-next       # Coding-Spezialist
-claude-msh --list                    # alle Modelle vom Gateway
-claude-msh -e http://127.0.0.1:4000  # anderen Endpoint (z.B. lokal auf opus)
-claude-msh -p "kurzer prompt"        # alles nach den eigenen Optionen geht 1:1 an `claude`
+claude-msh --anthropic "frag mich was"
+claude-msh --ollama "was geht"
 ```
 
-Auf Windows lauten die Optionen `-Model`, `-Endpoint`, `-List` (PowerShell-Stil),
-sonst identisch.
+## Mount-Pfade
 
-## Verfuegbare Modelle (Stand 2026-05-03)
+Bindings.md steuert, welche Ordner in den Container gemountet werden:
 
-Self-Hosted (laufen auf opus, kostenlos, DSGVO-konform):
-- `qwen3.6` / `qwen3.6:35b` — Default, hybrid Mamba+Transformer MoE (35B/3B)
-- `qwen3.6-abliterated:35b` — uncensored Variante
-- `qwen3-coder-next` / `qwen3-coder-next:latest` — Coding-Spezialist
-- `gemma4` — Google Gemma 4
+```
+# Format: <host-pfad>=<container-pfad>
+./workspace=/workspace
+./projects/my-repo=/projects/my-repo
+```
 
-Cloud (gehen ueber LiteLLM, kosten Geld):
-- `gpt-4.1`, `gpt-4o`, `gpt-4o-mini`, `o1`, `o3`, `o3-mini`, `o4-mini`
-- `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`
+Standard: `./workspace=/workspace`. Wenn Bindings.md fehlt oder leer ist, wird nur `./workspace` eingebunden — einfach Enter drcken.
+
+## .env
+
+Auth-Tokens in `.env` im Script-Verzeichnis ablegen (nicht committet):
+
+```
+MSH_VLLM_URL=https://vllm.missionstarkeshandwerk.de
+MSH_VLLM_API_KEY=...
+MSH_VLLM_MODEL=qwen3.6
+MSH_API_URL=https://gateway.missionstarkeshandwerk.de
+MSH_API_KEY=sk-msh-local-...
+```
+
+## Docker Image
+
+```dockerfile
+FROM node:22-bookworm-slim
+RUN apt-get update && apt-get install -y git openssh-client curl jq python3
+RUN npm install -g @anthropic-ai/claude-code
+ENV ANTHROPIC_BASE_URL=https://gateway.missionstarkeshandwerk.de
+ENV ANTHROPIC_API_KEY=ollama
+ENV HOME=/workspace
+WORKDIR /workspace
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["claude", "--model", "qwen3.6"]
+```
+
+Das Image wird einmalig gebaut: `docker build -t senity-claude:latest .`
 
 ## Troubleshooting
 
-**`FEHLER: Kein Auth-Token gefunden`**
-→ `LITELLM_MASTER_KEY` ist nicht gesetzt und `~/.config/claude-msh/auth`
-existiert nicht. Schritt 2 der Installation nachholen.
+**Docker Desktop nicht gefunden**
+→ Installiere: https://docs.docker.com/desktop/install/windows-install/
+→ Oder: `winget install Docker.DockerDesktop`
 
-**`401 Unauthorized` vom Gateway**
-→ Token ist falsch oder veraltet. Auf opus checken:
-`grep LITELLM_MASTER_KEY /home/msh/gateway-stack/.env`.
+**kein Auth-Token gefunden**
+→ `.env` im Script-Verzeichnis pruefen
+→ `MSH_API_KEY` oder `ANTHROPIC_API_KEY` muss gesetzt sein
 
-**Claude Code zeigt komische Tool-Call-Fehler**
-→ Das Anthropic-Format auf Port 11434 (LiteLLM-Proxy) hat eine bekannte
-Streaming-Inkompatibilitaet. Deshalb routet Caddy `/v1/messages` auf den
-cc-adapter (Port 8765). Sollte transparent sein — wenn nicht, oeffne
-ein Ticket.
+**Ollama nicht erreichbar**
+→ `ollama serve` starten
+→ Port 11434 muss auf localhost lauschen
 
-**`thinking`-Mode aktivieren**
-→ Geht aktuell nicht ueber den Anthropic-Pfad (LiteLLM droppt
-`extra_body` bei der Konvertierung). Wer Reasoning braucht, ruft
-`/v1/chat/completions` direkt auf — das ist kein Claude-Code-Use-Case.
+**Container startet nicht**
+→ `docker images` — Image `senity-claude:latest` muss existieren
+→ `docker ps -a` — Alte Container loesen: `docker rm senity-workspace-*`

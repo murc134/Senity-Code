@@ -1,24 +1,35 @@
 #!/usr/bin/env bash
 # ══════════════════════════════════════════════════════════════
-# claude-msh — Claude Code gegen Self-Hosted Modelle (Linux/macOS)
+# claude-msh — Senity Workspace (Docker Container)
 #
-# Liest .env aus dem eigenen Verzeichnis und leitet auf MSH vLLM
-# oder Gateway um. Primar: direkter vLLM-Endpoint (thinking support).
-#
-# Usage:
-#   claude-msh                        Default-Modell qwen3.6
-#   claude-msh "frag mich was"        Argumente an claude weiterleiten
-#   claude-msh -m gpt-4o "..."        Modell waehlen
-#
-# Voraussetzung: claude CLI installiert + .env im Script-Verzeichnis.
+# Startet Claude Code in einem Docker Container.
+# Modus: MSH Gateway / Eigenes Anthropic / Ollama lokal.
 # ══════════════════════════════════════════════════════════════
 set -euo pipefail
 
-# ── Script-Verzeichnis ermitteln ──
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${SCRIPT_DIR}/.env"
 
-# ── .env parsen ──
+MODE="${1:-msh}"
+MODEL=""
+EXTRA=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -m|--model)  MODEL="$2"; shift 2 ;;
+        -e|--endpoint) GATEWAY_URL="$2"; shift 2 ;;
+        -a|--anthropic) MODE="anthropic"; shift ;;
+        -o|--ollama) MODE="ollama"; shift ;;
+        -h|--help)
+            echo "Usage: claude-msh [--model MODELL] [--anthropic|--ollama]"
+            echo ""
+            echo "  Modes: msh (default, qwen3.6), anthropic, ollama"
+            exit 0 ;;
+        *) EXTRA+=("$1"); shift ;;
+    esac
+done
+
+# ── .env lesen ──
+ENV_FILE="${SCRIPT_DIR}/.env"
 declare -A ENV_VARS=()
 if [[ -f "$ENV_FILE" ]]; then
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -34,85 +45,93 @@ if [[ -f "$ENV_FILE" ]]; then
     done < "$ENV_FILE"
 fi
 
-# ── Werte aus .env ──
-MODEL="${1:-}"
-LIST_ONLY=0
-EXTRA=()
-GATEWAY_URL="${CLAUDE_MSH_URL:-${ENV_VARS[MSH_API_URL]:-https://gateway.missionstarkeshandwerk.de}}"
+# ── Werte pro Modus ──
+TOKEN=""
+BASE_URL=""
 
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -m|--model)  MODEL="$2"; shift 2 ;;
-        -e|--endpoint) GATEWAY_URL="$2"; shift 2 ;;
-        -l|--list)   LIST_ONLY=1; shift ;;
-        -h|--help)
-            sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
-            exit 0 ;;
-        *) EXTRA+=("$1"); shift ;;
-    esac
-done
-
-# Token: vLLM zuerst, dann Gateway
-TOKEN="${ENV_VARS[MSH_VLLM_API_KEY]:-${LITELLM_MASTER_KEY:-${ENV_VARS[MSH_API_KEY]:-}}}"
-
-if [[ -z "$TOKEN" ]]; then
-    cat >&2 <<EOF
-FEHLER: Kein Auth-Token gefunden.
-
-Pruefe .env im Script-Verzeichnis: $ENV_FILE
-
-Oder setz die Env-Variable: LITELLM_MASTER_KEY
-EOF
-    exit 1
-fi
-
-VLLM_URL="${ENV_VARS[MSH_VLLM_URL]:-}"
-MODEL_DEFAULT="${ENV_VARS[MSH_VLLM_MODEL]:-qwen3.6}"
+case "$MODE" in
+    msh)
+        TOKEN="${ENV_VARS[MSH_API_KEY]:-${ENV_VARS[MSH_VLLM_API_KEY]:-${LITELLM_MASTER_KEY:-}}}"
+        if [[ -z "$TOKEN" ]]; then
+            echo "FEHLER: Kein Auth-Token gefunden." >&2
+            echo "Setz MSH_API_KEY in .env oder LITELLM_MASTER_KEY." >&2
+            exit 1
+        fi
+        BASE_URL="${ENV_VARS[MSH_API_URL]:-https://gateway.missionstarkeshandwerk.de}"
+        ;;
+    anthropic)
+        TOKEN="${ANTHROPIC_API_KEY:-}"
+        if [[ -z "$TOKEN" ]]; then
+            echo "FEHLER: ANTHROPIC_API_KEY nicht gesetzt." >&2
+            exit 1
+        fi
+        BASE_URL=""
+        ;;
+    ollama)
+        TOKEN="ollama"
+        BASE_URL="${GATEWAY_URL:-http://host.docker.internal:11434}"
+        ;;
+    *)
+        echo "FEHLER: Unbekannter Modus '$MODE'. Waehle: msh, anthropic, ollama" >&2
+        exit 1
+        ;;
+esac
 
 if [[ -z "$MODEL" ]]; then
-    if [[ -n "$VLLM_URL" ]]; then
-        MODEL="$MODEL_DEFAULT"
-    else
-        MODEL="qwen3.6"
-    fi
+    MODEL="${ENV_VARS[MSH_VLLM_MODEL]:-qwen3.6}"
 fi
 
-# Endpoint: vLLM primar, Fallback Gateway
-if [[ -z "$GATEWAY_URL" || "$GATEWAY_URL" == *"missionstarkeshandwerk.de" ]]; then
-    if [[ -n "$VLLM_URL" ]]; then
-        GATEWAY_URL="$VLLM_URL"
-    fi
+# ── Docker starten ──
+CONTAINER_NAME="senity-workspace-$(whoami)-$$"
+WORKSPACE_PATH="${SCRIPT_DIR}/workspace"
+
+# Workspace erstellen
+mkdir -p "$WORKSPACE_PATH"
+
+DOCKER_ARGS=(
+    -it --rm
+    --name "$CONTAINER_NAME"
+    -v "${WORKSPACE_PATH}:/workspace"
+    -w /workspace
+)
+
+# Bindings aus Bindings.md
+BINDINGS_FILE="${SCRIPT_DIR}/Bindings.md"
+if [[ -f "$BINDINGS_FILE" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="$(echo "$line" | sed 's/#.*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        if [[ "$line" =~ ^([^\s=]+)=([^\s]+)$ ]]; then
+            host_binding="${BASH_REMATCH[1]}"
+            container_binding="${BASH_REMATCH[2]}"
+            full_host="$(realpath "${SCRIPT_DIR}/${host_binding}" 2>/dev/null || echo "")"
+            if [[ -n "$full_host" && -d "$full_host" ]]; then
+                DOCKER_ARGS+=(-v "${full_host}:${container_binding}")
+            fi
+        fi
+    done < "$BINDINGS_FILE"
 fi
 
-if [[ "$LIST_ONLY" == "1" ]]; then
-    curl -fsS -H "Authorization: Bearer $TOKEN" "$GATEWAY_URL/v1/models" \
-        | python3 -c 'import sys,json
-for m in json.load(sys.stdin).get("data", []):
-    print(m["id"])'
-    exit 0
+# SSH-Key
+if [[ -d "$HOME/.ssh" ]]; then
+    DOCKER_ARGS+=(-v "${HOME}/.ssh:/home/node/.ssh:ro")
 fi
 
-if ! command -v claude >/dev/null 2>&1; then
-    cat >&2 <<EOF
-FEHLER: claude CLI nicht gefunden.
-Installation: npm install -g @anthropic-ai/claude-code
-EOF
-    exit 1
+# Git-Config
+if [[ -f "$HOME/.gitconfig" ]]; then
+    DOCKER_ARGS+=(-v "${HOME}/.gitconfig:/home/node/.gitconfig:ro")
 fi
 
-# vLLM nutzt OpenAI-kompatibles Format
-if [[ "$GATEWAY_URL" == *"$VLLM_URL"* && -n "$VLLM_URL" ]]; then
-    export OPENAI_BASE_URL="$GATEWAY_URL"
-    export OPENAI_API_KEY="$TOKEN"
-    unset ANTHROPIC_BASE_URL 2>/dev/null || true
-    unset ANTHROPIC_AUTH_TOKEN 2>/dev/null || true
-    unset ANTHROPIC_API_KEY 2>/dev/null || true
-else
-    export ANTHROPIC_BASE_URL="$GATEWAY_URL"
-    export ANTHROPIC_API_KEY="$TOKEN"
-    unset ANTHROPIC_AUTH_TOKEN 2>/dev/null || true
-    unset OPENAI_BASE_URL 2>/dev/null || true
-    unset OPENAI_API_KEY 2>/dev/null || true
+# Env-Vars
+DOCKER_ARGS+=(-e "ANTHROPIC_BASE_URL=${BASE_URL}")
+DOCKER_ARGS+=(-e "ANTHROPIC_API_KEY=${TOKEN}")
+DOCKER_ARGS+=(-e "HOME=/workspace")
+DOCKER_ARGS+=(-e "TERM=xterm-256color")
+
+if [[ "$MODE" == "ollama" ]]; then
+    DOCKER_ARGS+=(--add-host host.docker.internal:host-gateway)
 fi
 
-exec claude --model "$MODEL" "${EXTRA[@]}"
+DOCKER_ARGS+=(--model "$MODEL")
+
+exec docker run "${DOCKER_ARGS[@]}" senity-claude:latest "${EXTRA[@]}"
