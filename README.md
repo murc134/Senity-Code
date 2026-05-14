@@ -8,36 +8,37 @@ Startet Claude Code in einem Docker Container — universell auf Windows, Linux 
 # 1. Setup ausfuehren
 .\setup.bat
 
-# 2. Modus waehlen
-#    1) MSH Gateway (qwen3.6 vom Missionstarkeshandwerk — vLLM, am schnellsten)
-#    2) Eigenes Anthropic (Pro/Team API-Key)
-#    3) Ollama lokal
+# 2. Modus waehlen (MSH / Anthropic / Ollama)
+# 3. Container startet interaktiv
 
-# 3. Loslegen
-.\claude-msh.bat
+# Oder direkt (Yolo optional):
+.\claude-msh.bat --yolo
+./claude-msh.sh --yolo
 ```
 
 ## Was das macht
 
-1. Prueft Docker Desktop
+1. Prueft Docker Desktop (installiert automatisch falls nicht vorhanden)
 2. Baut das Docker Image `senity-claude:latest`
-3. Prueft/erstellt Bindings.md
-4. Waehlt die Modell-Quelle
-5. Startet Claude Code im Container mit allen Mounts
+3. Erstellt Desktop-Verknuepfung (Windows)
+4. Prueft/erstellt Bindings.md
+5. Waehlt Provider, Modell und Yolo-Modus
+6. Startet Claude Code im Container mit allen Mounts
 
 ## Verfigbare Modus
 
 | Modus | Modell | Quelle | Token |
 |---|---|---|---|
-| `msh` (Default) | qwen3.6 | vLLM `vllm.missionstarkeshandwerk.de` | `.env` MSH_API_KEY |
+| `msh` (Default) | qwen3.6 | vLLM `vllm.missionstarkeshandwerk.de` | `.env` MSH_API_KEY / MSH_VLLM_API_KEY |
 | `anthropic` | claude-sonnet-4-6 | Echte Anthropic API | `ANTHROPIC_API_KEY` Env |
 | `ollama` | freiwaehlbbar | Lokaler Ollama | `ollama` (kein Token) |
 
 Manuellen Modus waehlen:
 
 ```bash
-claude-msh --anthropic "frag mich was"
-claude-msh --ollama "was geht"
+./claude-msh.sh --msh
+./claude-msh.sh --anthropic --yolo
+./claude-msh.sh --ollama --model llama3.1
 ```
 
 ## Mount-Pfade
@@ -50,7 +51,16 @@ Bindings.md steuert, welche Ordner in den Container gemountet werden:
 ./projects/my-repo=/projects/my-repo
 ```
 
-Standard: `./workspace=/workspace`. Wenn Bindings.md fehlt oder leer ist, wird nur `./workspace` eingebunden — einfach Enter drcken.
+Standard: `./workspace=/workspace`. Wenn Bindings.md fehlt oder leer ist, wird nur `./workspace` eingebunden.
+
+## Config Mount
+
+`.claude/` vom Host wird nach `/home/node/.claude` im Container gemountet. So sind Claude Code-Einstellungen immer synchron.
+
+```
+claude/
+├── settings.local.json   # Persoehnliche Einstellungen
+```
 
 ## .env
 
@@ -75,20 +85,47 @@ ENV ANTHROPIC_API_KEY=ollama
 ENV HOME=/workspace
 WORKDIR /workspace
 ENTRYPOINT ["/docker-entrypoint.sh"]
-CMD ["claude", "--model", "qwen3.6"]
+CMD ["claude"]
 ```
 
 Das Image wird einmalig gebaut: `docker build -t senity-claude:latest .`
 
+## Yolo Mode
+
+Standard deaktiviert (Sicherheit). Aktivieren:
+
+```bash
+# Setup
+.\setup.bat --yolo
+./setup.sh --yolo
+
+# Direkt
+.\claude-msh.bat --yolo
+./claude-msh.sh --yolo
+```
+
+Claude Code fuehrt Commands ohne Bestaetigung aus. Deaktivieren:
+
+```bash
+# Setup
+.\setup.bat --no-yolo
+./setup.sh --no-yolo
+
+# Direkt
+.\claude-msh.bat --no-yolo
+./claude-msh.sh --no-yolo
+```
+
 ## Troubleshooting
 
 **Docker Desktop nicht gefunden**
-→ Installiere: https://docs.docker.com/desktop/install/windows-install/
+→ Wird automatisch installiert
+→ Oder manuell: https://docs.docker.com/desktop/install/windows-install/
 → Oder: `winget install Docker.DockerDesktop`
 
 **kein Auth-Token gefunden**
 → `.env` im Script-Verzeichnis pruefen
-→ `MSH_API_KEY` oder `ANTHROPIC_API_KEY` muss gesetzt sein
+→ `MSH_API_KEY` oder `MSH_VLLM_API_KEY` muss gesetzt sein
 
 **Ollama nicht erreichbar**
 → `ollama serve` starten

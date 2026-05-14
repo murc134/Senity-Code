@@ -1,14 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-echo "Senity Workspace Container gestartet"
-echo "  Home:   $(whoami)"
-echo "  PWD:    $(pwd)"
-echo "  MODEL:  ${ANTHROPIC_BASE_URL:-nicht gesetzt}"
+# ── Senity Workspace Container Entry Point ──
 
-# Git-Konfiguration aus Host-Share wenn vorhanden
-if [[ -f /workspace/.gitconfig ]]; then
-    cp /workspace/.gitconfig /home/node/.gitconfig
+# Config-Directory existenz pruefen
+if [[ ! -d /home/node/.claude ]]; then
+    mkdir -p /home/node/.claude
 fi
 
 exec "$@"
