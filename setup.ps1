@@ -130,7 +130,7 @@ if ($createShortcut) {
 
         $link = $shell.CreateShortcut($linkPath)
         $link.TargetPath = "pwsh.exe"
-        $link.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $ScriptDir 'claude-msh.ps1')`""
+        $link.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $ScriptDir 'claude-senity.ps1')`""
         $link.WorkingDirectory = $ScriptDir
         if (Test-Path $logoPath) {
             $link.IconLocation = $logoPath
@@ -213,20 +213,22 @@ if (Test-Path $envFile) {
 # Modus ermitteln
 if (-not $Mode) {
     if ($NoInteractive) {
-        $Mode = "msh"
+        $Mode = "proxy"
     } else {
         Write-Host ""
         Write-Host "  Provider waehlen:" -ForegroundColor White
-        Write-Host "    1) MSH Gateway  — qwen3.6 (vLLM, am schnellsten)" -ForegroundColor White
-        Write-Host "    2) Anthropic    — claude-sonnet-4-6 (Echte API)" -ForegroundColor White
-        Write-Host "    3) Ollama       — freiwaehlbbar (lokal)" -ForegroundColor White
+        Write-Host "    1) Senity Chat Proxy  — claude-sonnet-4-6 (Default)" -ForegroundColor White
+        Write-Host "    2) MSH Gateway        — qwen3.6 (vLLM)" -ForegroundColor White
+        Write-Host "    3) Anthropic          — claude-sonnet-4-6 (Echte API)" -ForegroundColor White
+        Write-Host "    4) Ollama             — freiwaehlbar (lokal)" -ForegroundColor White
         Write-Host ""
-        $choice = Read-Host "  Wahl (1/2/3)"
+        $choice = Read-Host "  Wahl (1/2/3/4)"
         switch ($choice) {
-            "1" { $Mode = "msh" }
-            "2" { $Mode = "anthropic" }
-            "3" { $Mode = "ollama" }
-            default { $Mode = "msh"; Write-Host "  Default: MSH Gateway" -ForegroundColor Yellow }
+            "1" { $Mode = "proxy" }
+            "2" { $Mode = "msh" }
+            "3" { $Mode = "anthropic" }
+            "4" { $Mode = "ollama" }
+            default { $Mode = "proxy"; Write-Host "  Default: Senity Chat Proxy" -ForegroundColor Yellow }
         }
     }
 }
@@ -234,16 +236,32 @@ if (-not $Mode) {
 # Token + URL pro Modus
 $token = ""
 $baseUrl = ""
-$defaultModel = "qwen3.6"
+$defaultModel = "claude-sonnet-4-6"
 
 switch ($Mode) {
+    "proxy" {
+        $token = $envVars['SENITY_CHAT_PROXY_KEY']
+        if (-not $token) { $token = $env:SENITY_CHAT_PROXY_KEY }
+        if (-not $token) {
+            if ($NoInteractive) {
+                Write-Host "  FEHLER: SENITY_CHAT_PROXY_KEY nicht gesetzt." -ForegroundColor Red
+                exit 1
+            }
+            $token = Read-Host "  Senity Chat Proxy Key eingeben"
+            if (-not $token) { exit 1 }
+        }
+        $baseUrl = $envVars['SENITY_CHAT_PROXY_URL']
+        if (-not $baseUrl) { $baseUrl = "https://sdr.senity.ai/api/claude-proxy" }
+        $defaultModel = "claude-sonnet-4-6"
+        Write-Host "  Provider: Senity Chat Proxy ($baseUrl)" -ForegroundColor Green
+    }
     "msh" {
         $token = $envVars['MSH_API_KEY']
         if (-not $token) { $token = $envVars['MSH_VLLM_API_KEY'] }
         if (-not $token) { $token = $env:LITELLM_MASTER_KEY }
         if (-not $token) {
             if ($NoInteractive) {
-                Write-Host "  FEHLER: Kein Auth-Token gefunden (MSH_API_KEY, MSH_VLLM_API_KEY oder LITELLM_MASTER_KEY)." -ForegroundColor Red
+                Write-Host "  FEHLER: Kein Auth-Token gefunden (MSH_API_KEY)." -ForegroundColor Red
                 exit 1
             }
             $token = Read-Host "  MSH API-Key eingeben"

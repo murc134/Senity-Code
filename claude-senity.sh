@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ══════════════════════════════════════════════════════════════
-# claude-msh.sh — Senity Workspace (Container Start, Linux/Mac)
+# claude-senity.sh — Senity Workspace (Container Start, Linux/Mac)
 #
 # Usage:
-#   ./claude-msh.sh                              # Interaktiv
-#   ./claude-msh.sh --msh                        # Direkt MSH-Modus
-#   ./claude-msh.sh --anthropic --yolo           # Direkt Anthropic + Yolo
-#   ./claude-msh.sh --ollama --model llama3.1    # Direkt Ollama
+#   ./claude-senity.sh                              # Senity Claude-Proxy (Default)
+#   ./claude-senity.sh --msh                        # MSH Gateway (qwen3.6)
+#   ./claude-senity.sh --anthropic --yolo           # Direkt Anthropic + Yolo
+#   ./claude-senity.sh --ollama --model llama3.1    # Lokaler Ollama
 # ══════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -19,17 +19,21 @@ EXTRA=()
 # ── Argumente parsen ──
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -m|--model)  MODEL="$2"; shift 2 ;;
+        -m|--model)    MODEL="$2"; shift 2 ;;
         -e|--endpoint) GATEWAY_URL="$2"; shift 2 ;;
-        --msh)       MODE="msh"; shift ;;
-        --anthropic) MODE="anthropic"; shift ;;
-        --ollama)    MODE="ollama"; shift ;;
-        --yolo)      YOLO=true; shift ;;
-        --no-yolo)   YOLO=false; shift ;;
+        --proxy)       MODE="proxy"; shift ;;
+        --msh)         MODE="msh"; shift ;;
+        --senity)      MODE="senity"; shift ;;
+        --anthropic)   MODE="anthropic"; shift ;;
+        --ollama)      MODE="ollama"; shift ;;
+        --yolo)        YOLO=true; shift ;;
+        --no-yolo)     YOLO=false; shift ;;
         -h|--help)
-            echo "Usage: ./claude-msh.sh [OPTIONS]"
+            echo "Usage: ./claude-senity.sh [OPTIONS]"
             echo ""
-            echo "  --msh           MSH Gateway (default, qwen3.6)"
+            echo "  --proxy         Senity Chat Proxy (default)"
+            echo "  --msh           MSH Gateway (qwen3.6)"
+            echo "  --senity        Senity Ollama Cloud (qwen3:8b)"
             echo "  --anthropic     Eigenes Anthropic API"
             echo "  --ollama        Lokaler Ollama"
             echo "  --model NAME    Modell ueberschreiben"
@@ -59,19 +63,37 @@ fi
 
 # ── Modus ermitteln ──
 if [[ -z "$MODE" ]]; then
-    MODE="msh"
+    MODE="proxy"
 fi
 
 # ── Werte pro Modus ──
 token=""
 base_url=""
-default_model="qwen3.6"
+default_model="claude-sonnet-4-6"
 
 case "$MODE" in
-    msh)
-        token="${ENV_VARS[MSH_API_KEY]:-${ENV_VARS[MSH_VLLM_API_KEY]:-${LITELLM_MASTER_KEY:-}}}"
+    proxy)
+        token="${ENV_VARS[SENITY_CHAT_PROXY_KEY]:-${SENITY_CHAT_PROXY_KEY:-}}"
         if [[ -z "$token" ]]; then
-            echo "FEHLER: Kein Auth-Token gefunden (MSH_API_KEY oder MSH_VLLM_API_KEY in .env)."
+            echo "FEHLER: SENITY_CHAT_PROXY_KEY nicht gesetzt."
+            exit 1
+        fi
+        base_url="${ENV_VARS[SENITY_CHAT_PROXY_URL]:-https://api.senity.ai/api/claude-proxy}"
+        default_model="claude-sonnet-4-6"
+        ;;
+    senity)
+        token="${ENV_VARS[SENITY_OLLAMA_API_KEY]:-${SENITY_OLLAMA_API_KEY:-}}"
+        if [[ -z "$token" ]]; then
+            echo "FEHLER: SENITY_OLLAMA_API_KEY nicht gesetzt."
+            exit 1
+        fi
+        base_url="${ENV_VARS[SENITY_OLLAMA_URL]:-https://ollama.senity.ai}"
+        default_model="${ENV_VARS[SENITY_OLLAMA_MODEL]:-qwen3:8b}"
+        ;;
+    msh)
+        token="${ENV_VARS[MSH_API_KEY]:-${MSH_API_KEY:-}}"
+        if [[ -z "$token" ]]; then
+            echo "FEHLER: MSH_API_KEY nicht gesetzt."
             exit 1
         fi
         base_url="${ENV_VARS[MSH_API_URL]:-https://gateway.missionstarkeshandwerk.de}"
@@ -91,7 +113,7 @@ case "$MODE" in
         base_url="${GATEWAY_URL:-http://host.docker.internal:11434}"
         ;;
     *)
-        echo "FEHLER: Unbekannter Modus '$MODE'. Waehle: msh, anthropic, ollama"
+        echo "FEHLER: Unbekannter Modus '$MODE'. Waehle: proxy, senity, msh, anthropic, ollama"
         exit 1
         ;;
 esac
@@ -99,6 +121,58 @@ esac
 if [[ -z "$MODEL" ]]; then
     MODEL="$default_model"
 fi
+
+# ── Docker sicherstellen ──
+ensure_docker() {
+    if ! command -v docker &>/dev/null; then
+        echo "FEHLER: Docker nicht installiert."
+        echo "  macOS:  brew install --cask docker"
+        echo "  Linux:  https://docs.docker.com/engine/install/"
+        exit 1
+    fi
+
+    if ! docker info &>/dev/null; then
+        echo "Docker nicht bereit. Versuche Docker Desktop zu starten..."
+        if [[ "$(uname)" == "Darwin" ]]; then
+            open -a Docker
+        else
+            sudo systemctl start docker 2>/dev/null || true
+        fi
+        timeout=60
+        elapsed=0
+        while ! docker info &>/dev/null; do
+            sleep 3
+            elapsed=$((elapsed + 3))
+            echo "  Warte auf Docker... ($elapsed/${timeout}s)"
+            if [[ $elapsed -ge $timeout ]]; then
+                echo "FEHLER: Docker nicht bereit nach ${timeout}s."
+                exit 1
+            fi
+        done
+        echo "Docker bereit."
+    fi
+
+    if ! docker image inspect senity-claude:latest &>/dev/null; then
+        echo "Image 'senity-claude:latest' fehlt. Baue Image..."
+        setup_script="${SCRIPT_DIR}/setup.sh"
+        if [[ -f "$setup_script" ]]; then
+            bash "$setup_script"
+        else
+            echo "FEHLER: setup.sh nicht gefunden. Bitte manuell ausfuehren."
+            exit 1
+        fi
+    fi
+}
+
+# ── TTY-Check: docker run -it benoetigt echtes Terminal ──
+if [[ ! -t 0 ]]; then
+    echo "FEHLER: Kein TTY verfuegbar. Bitte direkt aus einem Terminal starten." >&2
+    echo "  macOS:  open -a Terminal '$0' oder iTerm2 verwenden" >&2
+    echo "  Linux:  In einem echten Terminal-Emulator ausfuehren" >&2
+    exit 1
+fi
+
+ensure_docker
 
 # ── Container starten ──
 container_name="senity-workspace-$(whoami)-$$"

@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y \
     build-essential make g++ \
     libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
     libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libgbm1 \
-    libpango-1.0-0 libcairo2 libasound2 \
+    libpango-1.0-0 libcairo2 libasound2t64 \
     fonts-liberation fontconfig \
     && rm -rf /var/lib/apt/lists/*
 
@@ -19,8 +19,8 @@ RUN chmod +x /docker-entrypoint.sh
 # Benutzer anlegen (node:22-Image bringt node-User bereits mit)
 RUN id -u node >/dev/null 2>&1 || useradd -m -s /bin/bash node
 
-# Config-Verzeichnisse erstellen und Eigentuemer setzen
-RUN mkdir -p /home/node/.claude /home/node/.ssh && chown -R node:node /home/node
+# SSH-Verzeichnis fuer node-User anlegen
+RUN mkdir -p /home/node/.ssh && chown -R node:node /home/node
 
 # Standard-Umgebung
 ENV HOME=/workspace

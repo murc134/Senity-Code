@@ -3,9 +3,9 @@ set -euo pipefail
 
 # ── Senity Workspace Container Entry Point ──
 
-# Config-Directory existenz pruefen
-if [[ ! -d /home/node/.claude ]]; then
-    mkdir -p /home/node/.claude
+# Config-Directory existenz pruefen — HOME=/workspace, daher /workspace/.claude
+if [[ ! -d "${HOME}/.claude" ]]; then
+    mkdir -p "${HOME}/.claude"
 fi
 
 exec "$@"

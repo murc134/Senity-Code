@@ -1,0 +1,11 @@
+# Windows-Batch und PowerShell: CRLF erzwingen (cmd.exe/pwsh braucht CRLF)
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Shell-Scripts: LF erzwingen
+*.sh    text eol=lf
+docker-entrypoint.sh text eol=lf
+
+# Alle anderen: Git entscheidet
+*       text=auto
