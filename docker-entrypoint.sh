@@ -8,4 +8,4 @@ if [[ ! -d "${HOME}/.claude" ]]; then
     mkdir -p "${HOME}/.claude"
 fi
 
-exec "$@"
+exec -- "$@"

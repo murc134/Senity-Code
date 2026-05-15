@@ -573,7 +573,7 @@ Write-Host ""
 Write-Host "  Starte Claude Code... (Ctrl+C zum Beenden)" -ForegroundColor Green
 Write-Host ""
 
-docker run @dockerArgs senity-claude:latest @claudeArgs @Rest
+docker run @dockerArgs senity-claude:latest claude @claudeArgs @Rest
 $containerExit = $LASTEXITCODE
 
 Write-Host ""
