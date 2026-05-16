@@ -11,6 +11,7 @@ param(
     [switch]$Yolo,
     [switch]$NoYolo,
     [string]$Model,
+    [switch]$Rebuild,
     [switch]$CreateShortcut,
     [switch]$Help,
     [Parameter(ValueFromRemainingArguments=$true)]
@@ -171,8 +172,9 @@ if ($Help) {
     Write-Host ""
     Write-Host "  Optionen:" -ForegroundColor White
     Write-Host "    --model NAME       Modell ueberschreiben (Default: Senity Proxy)" -ForegroundColor White
-    Write-Host "    --yolo             Yolo Mode (ungefragte Ausfuehrung)" -ForegroundColor White
-    Write-Host "    --no-yolo          Yolo Mode explizit deaktivieren" -ForegroundColor White
+    Write-Host "    --yolo             Yolo Mode (Default: an, Container ist isoliert)" -ForegroundColor White
+    Write-Host "    --no-yolo          Yolo Mode deaktivieren (Permission-Prompts)" -ForegroundColor White
+    Write-Host "    --rebuild          Docker-Image neu bauen (force)" -ForegroundColor White
     Write-Host "    --create-shortcut  Desktop-Verknuepfung erstellen und beenden" -ForegroundColor White
     Write-Host "    --help             Diese Hilfe" -ForegroundColor White
     Write-Host ""
@@ -219,9 +221,10 @@ if (-not $hasTTY) {
         if (-not $scriptPath) { $scriptPath = Join-Path $ScriptDir "claude-senity.ps1" }
 
         $flagParts = @()
-        if ($Yolo)   { $flagParts += "-Yolo" }
-        if ($NoYolo) { $flagParts += "-NoYolo" }
-        if ($Model)  { $flagParts += "-Model '$Model'" }
+        if ($Yolo)    { $flagParts += "-Yolo" }
+        if ($NoYolo)  { $flagParts += "-NoYolo" }
+        if ($Rebuild) { $flagParts += "-Rebuild" }
+        if ($Model)   { $flagParts += "-Model '$Model'" }
         foreach ($r in $Rest) { $flagParts += $r }
         $argStr = $flagParts -join " "
 
@@ -338,10 +341,11 @@ if (-not $Model) { $Model = $defaultModel }
 $modelLabel = if ($Model -eq $defaultModel) { "$defaultModelLabel ($defaultModel)" } else { $Model }
 Write-OK "Modell: $modelLabel"
 
-# Yolo
-$yolo = [bool]$Yolo
+# Yolo — Default: an (Container ist isoliert). --no-yolo schaltet aus.
+$yolo = $true
 if ($NoYolo) { $yolo = $false }
-Write-OK "Yolo-Mode: $([bool]$yolo)$(if ($yolo) { '  (Achtung: ungefragte Ausfuehrung!)' })"
+if ($Yolo)   { $yolo = $true }
+Write-OK "Yolo-Mode: $([bool]$yolo)$(if ($yolo) { '  (Skip-Permissions aktiv, Container isoliert)' })"
 
 $safeUser = ($env:USERNAME -replace '[^a-zA-Z0-9_.-]', '_').ToLower()
 
@@ -400,9 +404,22 @@ if (-not $daemonOk) {
 
 # Image pruefen + ggf. bauen
 Write-INFO "Pruefe Docker Image 'senity-claude:latest'..."
-docker image inspect senity-claude:latest 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-WARN "Image 'senity-claude:latest' nicht gefunden."
+$needsBuild = $false
+if ($Rebuild) {
+    Write-INFO "Force-Rebuild angefordert. Loesche bestehendes Image (falls vorhanden)..."
+    docker image rm senity-claude:latest 2>&1 | Out-Null
+    $needsBuild = $true
+} else {
+    docker image inspect senity-claude:latest 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-WARN "Image 'senity-claude:latest' nicht gefunden."
+        $needsBuild = $true
+    } else {
+        $imageCreated = docker image inspect senity-claude:latest --format "{{.Created}}" 2>&1
+        Write-OK "Image vorhanden (erstellt: $imageCreated)"
+    }
+}
+if ($needsBuild) {
     $dockerfilePath = Join-Path $ScriptDir "Dockerfile"
     if (-not (Test-Path $dockerfilePath)) {
         Exit-Error "Dockerfile nicht gefunden: $dockerfilePath"
@@ -413,9 +430,6 @@ if ($LASTEXITCODE -ne 0) {
         Exit-Error "Image-Build fehlgeschlagen (Exit $LASTEXITCODE)."
     }
     Write-OK "Image gebaut: senity-claude:latest"
-} else {
-    $imageCreated = docker image inspect senity-claude:latest --format "{{.Created}}" 2>&1
-    Write-OK "Image vorhanden (erstellt: $imageCreated)"
 }
 
 # Zombie-Container aufraemen

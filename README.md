@@ -104,17 +104,46 @@ Image wird einmalig gebaut: `docker build -t senity-claude:latest .`
 
 ## Yolo Mode
 
-Standard deaktiviert (Sicherheit). Aktivieren / Deaktivieren:
+**Standard aktiviert.** Der Container ist isoliert (eigener User, Mounts klar abgegrenzt), daher startet Claude Code per Default mit `--dangerously-skip-permissions`.
 
 ```bash
-.\claude-senity.bat --yolo
-./claude-senity.sh --yolo
-
+# Deaktivieren (Permission-Prompts aktivieren)
 .\claude-senity.bat --no-yolo
 ./claude-senity.sh --no-yolo
+
+# Explizit aktivieren (no-op, ist Default)
+.\claude-senity.bat --yolo
+./claude-senity.sh --yolo
 ```
 
-Im Yolo-Mode fuehrt Claude Code Commands ohne Bestaetigung aus.
+## Senity-Theme (Farben)
+
+Alle Senity-Farben (Banner im Container, Welcome-Box im Claude-Code-CLI) werden aus `senity-theme.conf` gespeist:
+
+```
+PRIMARY_256=99        # dunkles Senity-Lila
+SECONDARY_256=141     # helles Senity-Lila
+ACCENT_256=199        # Pink-Glow
+```
+
+- `patch-claude-header.js` patcht beim Image-Build alle Anthropic-Orange-Farbcodes im Claude-Code-Bundle auf die Senity-Palette und ersetzt Welcome-Box-Strings ("Welcome back!" -> "Willkommen bei Senity!" etc.).
+- `docker-entrypoint.sh` liest dieselbe Datei zur Laufzeit fuer das ASCII-Banner.
+
+Aenderungen an `senity-theme.conf` benoetigen einen Image-Rebuild:
+
+```bash
+.\claude-senity.bat --rebuild
+./claude-senity.sh --rebuild
+```
+
+## Image-Rebuild
+
+```bash
+.\claude-senity.bat --rebuild
+./claude-senity.sh --rebuild
+```
+
+Loescht `senity-claude:latest` und baut das Image neu. Noetig nach Aenderungen an `Dockerfile`, `senity-theme.conf`, `patch-claude-header.js` oder `docker-entrypoint.sh`.
 
 ## Troubleshooting
 

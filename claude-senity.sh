@@ -11,7 +11,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL=""
-YOLO=false
+YOLO=true    # Default: Skip-Permissions an (Container ist isoliert)
+REBUILD=false
 EXTRA=()
 
 # ── Argumente parsen ──
@@ -20,12 +21,14 @@ while [[ $# -gt 0 ]]; do
         -m|--model)    MODEL="$2"; shift 2 ;;
         --yolo)        YOLO=true; shift ;;
         --no-yolo)     YOLO=false; shift ;;
+        --rebuild)     REBUILD=true; shift ;;
         -h|--help)
             echo "Usage: ./claude-senity.sh [OPTIONS]"
             echo ""
             echo "  --model NAME    Modell ueberschreiben (Default: Senity Proxy)"
-            echo "  --yolo          Yolo Mode (default: aus)"
-            echo "  --no-yolo       Yolo Mode deaktiviert"
+            echo "  --yolo          Yolo Mode (Default: an, Container ist isoliert)"
+            echo "  --no-yolo       Yolo Mode deaktivieren (Permission-Prompts aktivieren)"
+            echo "  --rebuild       Docker-Image neu bauen (force)"
             echo "  -h, --help      Diese Hilfe"
             echo ""
             echo "Provider: Senity Chat Proxy (SENITY_CHAT_PROXY_URL / _KEY aus .env)"
@@ -233,8 +236,17 @@ ensure_docker() {
         echo "Docker bereit."
     fi
 
-    if ! docker image inspect senity-claude:latest &>/dev/null; then
-        echo "Image 'senity-claude:latest' fehlt. Baue Image (kann 2-5 Minuten dauern)..."
+    local needs_build=false
+    if $REBUILD; then
+        echo "Force-Rebuild angefordert. Loesche bestehendes Image (falls vorhanden)..."
+        docker image rm senity-claude:latest &>/dev/null || true
+        needs_build=true
+    elif ! docker image inspect senity-claude:latest &>/dev/null; then
+        needs_build=true
+    fi
+
+    if $needs_build; then
+        echo "Baue Image 'senity-claude:latest' (kann 2-5 Minuten dauern)..."
         if ! docker build -t senity-claude:latest "$SCRIPT_DIR"; then
             echo "FEHLER: Image-Build fehlgeschlagen."
             echo "  Manueller Versuch: docker build -t senity-claude:latest '$SCRIPT_DIR'"

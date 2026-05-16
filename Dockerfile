@@ -13,6 +13,14 @@ RUN apt-get update && apt-get install -y \
 # Claude Code CLI installieren
 RUN npm install -g @anthropic-ai/claude-code
 
+# Senity Theme (zentrale Farb-Konfiguration) ins Image kopieren
+COPY senity-theme.conf /etc/senity-theme.conf
+
+# Welcome-Box-Strings + Anthropic-Orange auf Senity-Farben patchen
+COPY patch-claude-header.js /tmp/patch-claude-header.js
+RUN SENITY_THEME_FILE=/etc/senity-theme.conf node /tmp/patch-claude-header.js \
+    && rm /tmp/patch-claude-header.js
+
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 

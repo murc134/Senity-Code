@@ -8,17 +8,28 @@ if [[ ! -d "${HOME}/.claude" ]]; then
     mkdir -p "${HOME}/.claude" 2>/dev/null || true
 fi
 
+# ── Senity Theme laden (zentrale Farb-Konfiguration) ──
+# Defaults, falls Theme-File fehlt
+PRIMARY_256=99
+SECONDARY_256=141
+ACCENT_256=199
+THEME_FILE="${SENITY_THEME_FILE:-/etc/senity-theme.conf}"
+if [[ -f "$THEME_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$THEME_FILE"
+fi
+
 # ── Senity Banner ──
 # Multi-Color (Logo-Style): weisser Bot + Pink-Brain-Glow + Lila-Akzente
 # Skip wenn kein TTY oder SENITY_NO_BANNER gesetzt
 if [[ -t 1 && -z "${SENITY_NO_BANNER:-}" ]]; then
-    # ANSI 256-Color Codes (matches Senity logo)
-    FACE=$'\033[1;38;5;255m'    # weiss bold (Gesicht + SENITY-Text)
-    GLOW=$'\033[38;5;199m'      # pink/magenta (Brain-Glow)
-    NODE_PINK=$'\033[38;5;199m' # pink (Pömpel-Variante 1)
-    NODE_PURP=$'\033[38;5;99m'  # dunkles Lila (Pömpel-Variante 2)
-    ACC=$'\033[38;5;141m'       # helles Lila (Fallback)
-    R=$'\033[0m'
+    ESC=$'\033'
+    FACE="${ESC}[1;38;5;255m"                # weiss bold (Gesicht + SENITY-Text, theme-unabhaengig)
+    GLOW="${ESC}[38;5;${ACCENT_256}m"        # Pink-Glow (Brain)
+    NODE_PINK="${ESC}[38;5;${ACCENT_256}m"   # Poempel-Variante 1 (ACCENT)
+    NODE_PURP="${ESC}[38;5;${PRIMARY_256}m"  # Poempel-Variante 2 (PRIMARY)
+    ACC="${ESC}[38;5;${SECONDARY_256}m"      # SECONDARY (Fallback)
+    R="${ESC}[0m"
 
     senity_banner_lines=(
         '                      ******                                                                         '
