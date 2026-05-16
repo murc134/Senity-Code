@@ -70,16 +70,21 @@ Standard: `./workspace=/workspace`. Wenn `Bindings.md` fehlt oder leer ist, wird
 ├── settings.local.json   # Persoenliche Einstellungen
 ```
 
-## .env
+## .env / Erst-Setup des Keys
 
-Credentials in `.env` im Script-Verzeichnis ablegen (nicht committet):
+Beim ersten Start prueft der Launcher, ob `SENITY_CHAT_PROXY_KEY` in `.env` (oder im Environment) gesetzt ist:
+
+- **Gesetzt:** Key wird gegen den Proxy validiert; bei Erfolg startet Claude Code direkt.
+- **Fehlt:** Launcher fragt interaktiv nach Proxy-URL (Default `https://sdr.senity.ai/api/claude-proxy`) und Key. Der Key wird gegen den Proxy getestet; bei Erfolg werden beide Werte in `.env` persistiert (max. 3 Versuche).
+
+Manuell anlegen geht weiterhin:
 
 ```
 SENITY_CHAT_PROXY_URL=https://sdr.senity.ai/api/claude-proxy
 SENITY_CHAT_PROXY_KEY=<uuid-oder-64-hex-key>
 ```
 
-Beide Werte koennen alternativ als Prozess-Environment gesetzt sein, das `.env`-File hat aber Vorrang.
+Beide Werte koennen alternativ als Prozess-Environment gesetzt sein, das `.env`-File hat aber Vorrang. `.env` ist via `.gitignore` ausgeschlossen.
 
 ## Docker Image
 
@@ -119,8 +124,13 @@ Im Yolo-Mode fuehrt Claude Code Commands ohne Bestaetigung aus.
 - Der Launcher startet Docker Desktop automatisch, wenn es bereits installiert, aber noch nicht laufend ist.
 
 **SENITY_CHAT_PROXY_KEY nicht gesetzt**
-- `.env` im Script-Verzeichnis pruefen
-- Variable muss gesetzt sein (UUID oder 64-Hex-Key)
+- Launcher fragt beim Start interaktiv nach URL und Key und validiert beides gegen den Proxy
+- Bei Erfolg wird `.env` automatisch geschrieben
+- Bei wiederholt fehlschlagender Validierung (3x): URL pruefen und Key beim Senity-Admin neu anfordern
+
+**Key-Validierung schlaegt fehl trotz gueltigem Key**
+- Netzwerk / Firewall pruefen (Launcher macht einen `POST /v1/messages` gegen die Proxy-URL)
+- URL ohne abschliessenden Slash eingeben, z.B. `https://sdr.senity.ai/api/claude-proxy`
 
 **Container startet nicht**
 - `docker images`, Image `senity-claude:latest` muss existieren
