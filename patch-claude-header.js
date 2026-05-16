@@ -2,14 +2,19 @@
 // ════════════════════════════════════════════════════════════════
 // patch-claude-header.js
 //
-// Ueberschreibt im @anthropic-ai/claude-code-Bundle:
+// Patcht im @anthropic-ai/claude-code-Paket:
 //   - Welcome-Box-Strings (englisch -> Senity-deutsch)
-//   - Anthropic-Orange Farb-Codes -> Senity-Farben aus senity-theme.conf
+//   - Anthropic-Orange Hex/RGB Farb-Codes -> Senity-Farben aus senity-theme.conf
 //
-// Laeuft einmalig im Docker-Build (nach `npm install -g claude-code`).
-// Idempotent: zweiter Lauf macht nichts (Strings/Codes sind weg).
+// Unterstuetzt:
+//   - JS-Bundles (.js/.mjs/.cjs) - klassisches Search-Replace
+//   - Natives Binary (bin/claude.exe als ELF/PE) - LAENGEN-ERHALTENDES Patching
 //
-// Theme-File: /tmp/senity-theme.conf (Build-Time)
+// Bei Binary-Patches muss der Ersatz-String exakt dieselbe Byte-Laenge haben
+// wie das Original (sonst zerschiesst es Offset-Tabellen). Text-Replacements
+// werden automatisch mit Spaces auf Originallaenge gepaddet bzw. abgeschnitten.
+//
+// Laeuft einmalig im Docker-Build. Idempotent.
 // ════════════════════════════════════════════════════════════════
 const fs = require('fs');
 const path = require('path');
@@ -30,30 +35,21 @@ const theme = {
 };
 if (fs.existsSync(themePath)) {
     const lines = fs.readFileSync(themePath, 'utf8').split(/\r?\n/);
-    for (const raw of lines) {
-        const line = raw.replace(/#.*$/, '').trim();
-        if (!line) continue;
-        const m = line.match(/^([A-Z0-9_]+)\s*=\s*"?([^"]*)"?\s*$/);
-        if (!m) continue;
-        theme[m[1]] = m[2];
+    for (let raw of lines) {
+        const line = raw.trim();
+        if (line.startsWith('#') || line === '') continue;
+        // 1. Quoted Wert: KEY="value" (Wert darf '#' enthalten, wichtig fuer Hex)
+        let m = line.match(/^([A-Z0-9_]+)\s*=\s*"([^"]*)"\s*(#.*)?$/);
+        if (m) { theme[m[1]] = m[2]; continue; }
+        // 2. Unquoted Wert: KEY=value (kein '#' im Wert erlaubt, Rest ist Kommentar)
+        m = line.match(/^([A-Z0-9_]+)\s*=\s*([^"#\s]+)\s*(#.*)?$/);
+        if (m) { theme[m[1]] = m[2]; continue; }
     }
-    console.log(`[patch] Theme geladen: ${themePath}`);
+    console.log(`[patch] Theme geladen: ${themePath} (PRIMARY_HEX=${theme.PRIMARY_HEX})`);
 } else {
     console.log('[patch] Theme-File fehlt, nutze Defaults');
 }
 
-// ─── Text-Ersetzungen ───────────────────────────────────────────
-const textReplacements = [
-    ['Welcome back!',              'Willkommen bei Senity!'],
-    ['Tips for getting started',   'Senity Hinweise'],
-    ["What's new",                 'Senity Updates'],
-    ['API Usage Billing',          'Senity Chat Proxy'],
-    ['Run /init to create a CLAUDE.md file with instructions for Claude',
-     'Tippe /init um eine CLAUDE.md mit Senity-Anweisungen anzulegen'],
-];
-
-// ─── Farb-Ersetzungen (Anthropic-Orange -> Senity-Theme) ────────
-// Mapping: helles/mittleres Orange -> SECONDARY, dunkles/sattes Orange -> PRIMARY
 const P = theme.PRIMARY_256;
 const S = theme.SECONDARY_256;
 const PR = theme.PRIMARY_RGB;
@@ -61,44 +57,57 @@ const SR = theme.SECONDARY_RGB;
 const PH = theme.PRIMARY_HEX;
 const SH = theme.SECONDARY_HEX;
 
+// ─── Text-Ersetzungen ───────────────────────────────────────────
+// Reihenfolge wichtig: laengere Patterns zuerst, sonst frisst der kuerzere
+// den laengeren auf ("Welcome back" frisst "Welcome back!").
+const textReplacements = [
+    ['Run /init to create a CLAUDE.md file with instructions for Claude',
+     'Tippe /init zum Anlegen einer CLAUDE.md mit Senity-Hinweisen'],
+    ['Tips for getting started',   'Senity Quick-Start-Tipps'],
+    ['API Usage Billing',          'Senity Chat Proxy'],
+    ['Welcome back!',              'Willkommen!'],     // 13B -> 11B + 2 Spaces padding
+    ["What's new",                 'Neuheiten'],       // 10B -> 9B + 1 Space padding
+];
+
+// ─── Farb-Ersetzungen ───────────────────────────────────────────
+// Anthropic-CLI nutzt aktuell genau ein Orange (#da7756 via chalk.hex)
+// plus diverse 256-color und truecolor Codes in legacy-Builds. Wir
+// ersetzen alle bekannten Varianten auf Senity-Lila (PRIMARY).
 const colorReplacements = [
+    // ─ Hex-Literale (chalk.hex('#...')) ─
+    ['#da7756', PH.toLowerCase()],   // aktueller Anthropic-Orange
+    ['#DA7756', PH],
+    ['#d97757', PH.toLowerCase()],
+    ['#D97757', PH],
+    ['#cc5834', PH.toLowerCase()],
+    ['#CC5834', PH],
+    ['#d7875f', PH.toLowerCase()],
+    ['#D7875F', PH],
+    ['#e68a6c', SH.toLowerCase()],
+    ['#E68A6C', SH],
+    ['#ff875f', SH.toLowerCase()],
+    ['#FF875F', SH],
     // ─ 256-color foreground ─
-    ['38;5;208',  `38;5;${P}`],   // bright orange #ff8700
-    ['38;5;202',  `38;5;${P}`],   // deep orange #ff5f00
-    ['38;5;166',  `38;5;${P}`],   // dark orange-red #d75f00
-    ['38;5;172',  `38;5;${P}`],   // dark orange #d78700
-    ['38;5;173',  `38;5;${P}`],   // muted orange #d7875f (Anthropic-Look)
-    ['38;5;130',  `38;5;${P}`],
-    ['38;5;131',  `38;5;${P}`],
-    ['38;5;214',  `38;5;${S}`],   // yellow-orange #ffaf00
-    ['38;5;209',  `38;5;${S}`],   // light coral #ff875f
-    ['38;5;215',  `38;5;${S}`],   // peach #ffaf5f
-    ['38;5;216',  `38;5;${S}`],   // light peach #ffaf87
-    ['38;5;217',  `38;5;${S}`],   // pinkish #ffafaf
+    ['38;5;208',  `38;5;${P}`],
+    ['38;5;202',  `38;5;${P}`],
+    ['38;5;166',  `38;5;${P}`],
+    ['38;5;172',  `38;5;${P}`],
+    ['38;5;173',  `38;5;${P}`],
+    ['38;5;214',  `38;5;${S}`],
+    ['38;5;209',  `38;5;${S}`],
+    ['38;5;215',  `38;5;${S}`],
     // ─ 256-color background ─
     ['48;5;208',  `48;5;${P}`],
     ['48;5;202',  `48;5;${P}`],
     ['48;5;173',  `48;5;${P}`],
     ['48;5;214',  `48;5;${S}`],
     // ─ Truecolor Foreground ─
-    ['38;2;217;119;87',  `38;2;${PR}`],   // #D97757 Anthropic-Orange
-    ['38;2;204;88;52',   `38;2;${PR}`],   // dunkler
-    ['38;2;215;135;95',  `38;2;${PR}`],   // #D7875F
-    ['38;2;230;138;108', `38;2;${SR}`],   // heller
-    ['38;2;255;135;95',  `38;2;${SR}`],   // #FF875F
-    ['38;2;255;175;0',   `38;2;${SR}`],
-    ['38;2;255;135;0',   `38;2;${PR}`],
-    // ─ Hex-Literale (chalk.hex('#...')) ─
-    ['#D97757', PH],
-    ['#d97757', PH.toLowerCase()],
-    ['#CC5834', PH],
-    ['#cc5834', PH.toLowerCase()],
-    ['#D7875F', PH],
-    ['#d7875f', PH.toLowerCase()],
-    ['#E68A6C', SH],
-    ['#e68a6c', SH.toLowerCase()],
-    ['#FF875F', SH],
-    ['#ff875f', SH.toLowerCase()],
+    ['38;2;218;119;86',  `38;2;${PR}`],  // #da7756
+    ['38;2;217;119;87',  `38;2;${PR}`],
+    ['38;2;204;88;52',   `38;2;${PR}`],
+    ['38;2;215;135;95',  `38;2;${PR}`],
+    ['38;2;230;138;108', `38;2;${SR}`],
+    ['38;2;255;135;95',  `38;2;${SR}`],
 ];
 
 // ─── npm root finden ────────────────────────────────────────────
@@ -116,36 +125,40 @@ if (!fs.existsSync(pkgDir)) {
     process.exit(0);
 }
 
-function walk(dir) {
-    const out = [];
+// ─── File-Sammlung ──────────────────────────────────────────────
+function walk(dir, out = []) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+        if (entry.name.startsWith('.')) continue;
         const p = path.join(dir, entry.name);
         if (entry.isDirectory()) {
-            out.push(...walk(p));
-        } else if (entry.isFile() && /\.(js|mjs|cjs)$/.test(entry.name)) {
+            walk(p, out);
+        } else if (entry.isFile()) {
             out.push(p);
         }
     }
     return out;
 }
 
-const files = walk(pkgDir);
-let totalText = 0;
-let totalColor = 0;
-let touchedFiles = 0;
+function isLikelyBinary(buf) {
+    // ELF (0x7F 'E' 'L' 'F')
+    if (buf.length >= 4 && buf[0] === 0x7F && buf[1] === 0x45 && buf[2] === 0x4C && buf[3] === 0x46) return true;
+    // PE (MZ)
+    if (buf.length >= 2 && buf[0] === 0x4D && buf[1] === 0x5A) return true;
+    // Mach-O
+    if (buf.length >= 4 && ((buf[0] === 0xCF || buf[0] === 0xCE) && buf[1] === 0xFA && buf[2] === 0xED && buf[3] === 0xFE)) return true;
+    if (buf.length >= 4 && (buf[0] === 0xFE && buf[1] === 0xED && buf[2] === 0xFA && (buf[3] === 0xCF || buf[3] === 0xCE))) return true;
+    return false;
+}
 
-for (const file of files) {
+function isTextFile(name) {
+    return /\.(js|mjs|cjs|json|md)$/i.test(name);
+}
+
+// ─── Patching ───────────────────────────────────────────────────
+function patchTextFile(file) {
     let content;
-    try {
-        content = fs.readFileSync(file, 'utf8');
-    } catch (e) {
-        continue;
-    }
-
-    let textHits = 0;
-    let colorHits = 0;
-
+    try { content = fs.readFileSync(file, 'utf8'); } catch { return [0, 0]; }
+    let textHits = 0, colorHits = 0;
     for (const [from, to] of textReplacements) {
         if (!content.includes(from)) continue;
         const parts = content.split(from);
@@ -158,13 +171,91 @@ for (const file of files) {
         content = parts.join(to);
         colorHits += parts.length - 1;
     }
+    if (textHits + colorHits > 0) fs.writeFileSync(file, content);
+    return [textHits, colorHits];
+}
 
-    if (textHits + colorHits > 0) {
-        fs.writeFileSync(file, content);
+// Padding: ergaenzt Replacement auf exakte Byte-Laenge des Originals.
+// - Wenn replacement kuerzer -> mit Spaces rechts auffuellen
+// - Wenn replacement laenger -> Warnung + skip (zerstoert Binary)
+function padToLength(replacement, targetLen, label) {
+    const repBuf = Buffer.from(replacement, 'utf8');
+    if (repBuf.length === targetLen) return repBuf;
+    if (repBuf.length < targetLen) {
+        const pad = Buffer.alloc(targetLen - repBuf.length, 0x20);
+        return Buffer.concat([repBuf, pad]);
+    }
+    console.warn(`[patch]   SKIP ${label}: replacement (${repBuf.length}B) > original (${targetLen}B)`);
+    return null;
+}
+
+function patchBinaryFile(file) {
+    let buf;
+    try { buf = fs.readFileSync(file); } catch { return [0, 0]; }
+    let textHits = 0, colorHits = 0;
+    let changed = false;
+
+    // Text-Patches: laengenerhaltend mit Space-Padding
+    for (const [from, to] of textReplacements) {
+        const fromBuf = Buffer.from(from, 'utf8');
+        const toBuf = padToLength(to, fromBuf.length, `"${from}"`);
+        if (!toBuf) continue;
+        let offset = 0;
+        while ((offset = buf.indexOf(fromBuf, offset)) !== -1) {
+            toBuf.copy(buf, offset);
+            textHits++;
+            offset += fromBuf.length;
+            changed = true;
+        }
+    }
+
+    // Color-Patches: muessen sowieso gleiche Laenge haben
+    for (const [from, to] of colorReplacements) {
+        const fromBuf = Buffer.from(from, 'utf8');
+        const toBuf = Buffer.from(to, 'utf8');
+        if (fromBuf.length !== toBuf.length) {
+            console.warn(`[patch]   SKIP color ${from}->${to}: length mismatch (${fromBuf.length} vs ${toBuf.length})`);
+            continue;
+        }
+        let offset = 0;
+        while ((offset = buf.indexOf(fromBuf, offset)) !== -1) {
+            toBuf.copy(buf, offset);
+            colorHits++;
+            offset += fromBuf.length;
+            changed = true;
+        }
+    }
+
+    if (changed) fs.writeFileSync(file, buf);
+    return [textHits, colorHits];
+}
+
+// ─── Main ───────────────────────────────────────────────────────
+const files = walk(pkgDir);
+let totalText = 0, totalColor = 0, touchedFiles = 0;
+
+for (const file of files) {
+    let kind = null;
+    if (isTextFile(file)) {
+        kind = 'text';
+    } else {
+        // unbekannte Extension -> Magic-Bytes pruefen
+        try {
+            const head = Buffer.alloc(4);
+            const fd = fs.openSync(file, 'r');
+            fs.readSync(fd, head, 0, 4, 0);
+            fs.closeSync(fd);
+            if (isLikelyBinary(head)) kind = 'binary';
+        } catch { /* skip */ }
+    }
+    if (!kind) continue;
+
+    const [t, c] = kind === 'binary' ? patchBinaryFile(file) : patchTextFile(file);
+    if (t + c > 0) {
         const rel = path.relative(pkgDir, file);
-        console.log(`[patch] ${rel}: text=${textHits}, color=${colorHits}`);
-        totalText += textHits;
-        totalColor += colorHits;
+        console.log(`[patch] ${rel} (${kind}): text=${t}, color=${c}`);
+        totalText += t;
+        totalColor += c;
         touchedFiles++;
     }
 }
