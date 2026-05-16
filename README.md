@@ -1,19 +1,19 @@
 # Senity Workspace — Docker-basierter Claude Code
 
-Startet Claude Code in einem Docker Container — universell auf Windows, Linux und macOS.
+Startet Claude Code in einem Docker Container, universell auf Windows, Linux und macOS.
+Einziger Provider: **Senity Chat Proxy**.
 
 ## Schnellstart
 
 ```powershell
-# 1. Setup ausfuehren
+# 1. Setup ausfuehren (baut Image, prueft Docker, fragt Modell + Yolo)
 .\setup.bat
 
-# 2. Modus waehlen (MSH / Anthropic / Ollama)
-# 3. Container startet interaktiv
-
-# Oder direkt (Yolo optional):
-.\claude-msh.bat --yolo
-./claude-msh.sh --yolo
+# 2. Direkt starten
+.\claude-senity.bat
+.\claude-senity.bat --yolo
+./claude-senity.sh
+./claude-senity.sh --yolo
 ```
 
 ## Was das macht
@@ -22,28 +22,27 @@ Startet Claude Code in einem Docker Container — universell auf Windows, Linux 
 2. Baut das Docker Image `senity-claude:latest`
 3. Erstellt Desktop-Verknuepfung (Windows)
 4. Prueft/erstellt Bindings.md
-5. Waehlt Provider, Modell und Yolo-Modus
+5. Liest Senity Chat Proxy Credentials aus `.env`, fragt Modell + Yolo
 6. Startet Claude Code im Container mit allen Mounts
 
-## Verfigbare Modus
+## Provider
 
-| Modus | Modell | Quelle | Token |
+Es gibt nur einen Provider: **Senity Chat Proxy**.
+
+| Provider | Default-Modell | Endpunkt | Token |
 |---|---|---|---|
-| `msh` (Default) | qwen3.6 | vLLM `vllm.missionstarkeshandwerk.de` | `.env` MSH_API_KEY / MSH_VLLM_API_KEY |
-| `anthropic` | claude-sonnet-4-6 | Echte Anthropic API | `ANTHROPIC_API_KEY` Env |
-| `ollama` | freiwaehlbbar | Lokaler Ollama | `ollama` (kein Token) |
+| Senity Chat Proxy | `claude-sonnet-4-6` | `SENITY_CHAT_PROXY_URL` (Default: `https://sdr.senity.ai/api/claude-proxy`) | `SENITY_CHAT_PROXY_KEY` |
 
-Manuellen Modus waehlen:
+Modell ueberschreiben:
 
 ```bash
-./claude-msh.sh --msh
-./claude-msh.sh --anthropic --yolo
-./claude-msh.sh --ollama --model llama3.1
+./claude-senity.sh --model claude-opus-4-7
+.\claude-senity.bat --model claude-opus-4-7
 ```
 
 ## Mount-Pfade
 
-Bindings.md steuert, welche Ordner in den Container gemountet werden:
+`Bindings.md` steuert, welche Ordner in den Container gemountet werden:
 
 ```
 # Format: <host-pfad>=<container-pfad>
@@ -51,28 +50,27 @@ Bindings.md steuert, welche Ordner in den Container gemountet werden:
 ./projects/my-repo=/projects/my-repo
 ```
 
-Standard: `./workspace=/workspace`. Wenn Bindings.md fehlt oder leer ist, wird nur `./workspace` eingebunden.
+Standard: `./workspace=/workspace`. Wenn `Bindings.md` fehlt oder leer ist, wird nur `./workspace` eingebunden.
 
 ## Config Mount
 
-`.claude/` vom Host wird nach `/home/node/.claude` im Container gemountet. So sind Claude Code-Einstellungen immer synchron.
+`.claude/` vom Host wird nach `/workspace/.claude` im Container gemountet (HOME=/workspace im Container). So sind Claude Code-Einstellungen immer synchron.
 
 ```
-claude/
-├── settings.local.json   # Persoehnliche Einstellungen
+.claude/
+├── settings.local.json   # Persoenliche Einstellungen
 ```
 
 ## .env
 
-Auth-Tokens in `.env` im Script-Verzeichnis ablegen (nicht committet):
+Credentials in `.env` im Script-Verzeichnis ablegen (nicht committet):
 
 ```
-MSH_VLLM_URL=https://vllm.missionstarkeshandwerk.de
-MSH_VLLM_API_KEY=...
-MSH_VLLM_MODEL=qwen3.6
-MSH_API_URL=https://gateway.missionstarkeshandwerk.de
-MSH_API_KEY=sk-msh-local-...
+SENITY_CHAT_PROXY_URL=https://sdr.senity.ai/api/claude-proxy
+SENITY_CHAT_PROXY_KEY=<uuid-oder-64-hex-key>
 ```
+
+Beide Werte koennen alternativ als Prozess-Environment gesetzt sein, das `.env`-File hat aber Vorrang.
 
 ## Docker Image
 
@@ -80,57 +78,49 @@ MSH_API_KEY=sk-msh-local-...
 FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y git openssh-client curl jq python3
 RUN npm install -g @anthropic-ai/claude-code
-ENV ANTHROPIC_BASE_URL=https://gateway.missionstarkeshandwerk.de
-ENV ANTHROPIC_API_KEY=ollama
 ENV HOME=/workspace
 WORKDIR /workspace
 ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["claude"]
 ```
 
-Das Image wird einmalig gebaut: `docker build -t senity-claude:latest .`
+`ANTHROPIC_BASE_URL` und `ANTHROPIC_API_KEY` werden zur Laufzeit vom Launcher gesetzt, nicht im Image fest verdrahtet.
+
+Image wird einmalig gebaut: `docker build -t senity-claude:latest .`
 
 ## Yolo Mode
 
 Standard deaktiviert (Sicherheit). Aktivieren:
 
 ```bash
-# Setup
 .\setup.bat --yolo
 ./setup.sh --yolo
 
-# Direkt
-.\claude-msh.bat --yolo
-./claude-msh.sh --yolo
+.\claude-senity.bat --yolo
+./claude-senity.sh --yolo
 ```
 
 Claude Code fuehrt Commands ohne Bestaetigung aus. Deaktivieren:
 
 ```bash
-# Setup
 .\setup.bat --no-yolo
 ./setup.sh --no-yolo
 
-# Direkt
-.\claude-msh.bat --no-yolo
-./claude-msh.sh --no-yolo
+.\claude-senity.bat --no-yolo
+./claude-senity.sh --no-yolo
 ```
 
 ## Troubleshooting
 
 **Docker Desktop nicht gefunden**
-→ Wird automatisch installiert
-→ Oder manuell: https://docs.docker.com/desktop/install/windows-install/
-→ Oder: `winget install Docker.DockerDesktop`
+- Wird automatisch installiert (winget / brew / apt / yum)
+- Manuell: https://docs.docker.com/desktop/install/windows-install/
+- Oder: `winget install Docker.DockerDesktop`
 
-**kein Auth-Token gefunden**
-→ `.env` im Script-Verzeichnis pruefen
-→ `MSH_API_KEY` oder `MSH_VLLM_API_KEY` muss gesetzt sein
-
-**Ollama nicht erreichbar**
-→ `ollama serve` starten
-→ Port 11434 muss auf localhost lauschen
+**SENITY_CHAT_PROXY_KEY nicht gesetzt**
+- `.env` im Script-Verzeichnis pruefen
+- Variable muss gesetzt sein (UUID oder 64-Hex-Key)
 
 **Container startet nicht**
-→ `docker images` — Image `senity-claude:latest` muss existieren
-→ `docker ps -a` — Alte Container loesen: `docker rm senity-workspace-*`
+- `docker images`, Image `senity-claude:latest` muss existieren
+- `docker ps -a`, alte Container loeschen: `docker rm senity-workspace-*`

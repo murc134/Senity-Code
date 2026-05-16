@@ -2,22 +2,14 @@
 # claude-senity.ps1 — Senity Workspace (Container Start)
 #
 # Usage:
-#   .\claude-senity.ps1                           # Senity Claude-Proxy (Default)
-#   .\claude-senity.ps1 --msh                     # MSH Gateway (qwen3.6)
-#   .\claude-senity.ps1 --senity                  # Senity Ollama Cloud (qwen3:8b)
-#   .\claude-senity.ps1 --anthropic --yolo        # Direkt Anthropic + Yolo
-#   .\claude-senity.ps1 --ollama --model llama3.1 # Lokaler Ollama
+#   .\claude-senity.ps1                # Senity Chat Proxy (einziger Provider)
+#   .\claude-senity.ps1 --yolo         # Yolo Mode (ungefragte Ausfuehrung)
+#   .\claude-senity.ps1 --model NAME   # Modell ueberschreiben
 # ══════════════════════════════════════════════════════════════
 param(
-    [switch]$Proxy,
-    [switch]$Senity,
-    [switch]$Msh,
-    [switch]$Anthropic,
-    [switch]$Ollama,
     [switch]$Yolo,
     [switch]$NoYolo,
     [string]$Model,
-    [string]$Endpoint,
     [switch]$Help,
     [Parameter(ValueFromRemainingArguments=$true)]
     [string[]]$Rest
@@ -61,25 +53,19 @@ Write-Host ""
 Write-DBG "ScriptDir  : $ScriptDir"
 Write-DBG "PowerShell : $($PSVersionTable.PSVersion)"
 Write-DBG "User       : $($env:USERNAME)  PID: $PID"
-Write-DBG "Args       : Proxy=$Proxy Senity=$Senity Msh=$Msh Anthropic=$Anthropic Ollama=$Ollama Yolo=$Yolo Model=$Model"
+Write-DBG "Args       : Yolo=$Yolo Model=$Model"
 Write-Host ""
 
 # ── Help ──
 if ($Help) {
     Write-Host "  Usage: .\claude-senity.ps1 [OPTIONS]" -ForegroundColor White
     Write-Host ""
-    Write-Host "  Provider (Standard: --proxy):" -ForegroundColor White
-    Write-Host "    --proxy          Senity Chat Proxy (sdr.senity.ai)" -ForegroundColor White
-    Write-Host "    --msh            MSH Gateway (qwen3.6)" -ForegroundColor White
-    Write-Host "    --senity         Senity Ollama Cloud (qwen3:8b)" -ForegroundColor White
-    Write-Host "    --anthropic      Direkte Anthropic API" -ForegroundColor White
-    Write-Host "    --ollama         Lokaler Ollama" -ForegroundColor White
+    Write-Host "  Provider: Senity Chat Proxy (fest, kein anderer Provider verfuegbar)" -ForegroundColor White
     Write-Host ""
     Write-Host "  Optionen:" -ForegroundColor White
-    Write-Host "    --model NAME     Modell ueberschreiben" -ForegroundColor White
+    Write-Host "    --model NAME     Modell ueberschreiben (Default: claude-sonnet-4-6)" -ForegroundColor White
     Write-Host "    --yolo           Yolo Mode (ungefragte Ausfuehrung)" -ForegroundColor White
     Write-Host "    --no-yolo        Yolo Mode explizit deaktivieren" -ForegroundColor White
-    Write-Host "    --endpoint URL   Ollama/Custom Endpoint URL" -ForegroundColor White
     Write-Host "    --help           Diese Hilfe" -ForegroundColor White
     Write-Host ""
     exit 0
@@ -88,7 +74,7 @@ if ($Help) {
 # ══════════════════════════════════════════════════════════════
 # [1] .env laden
 # ══════════════════════════════════════════════════════════════
-Write-INFO "[1/7] .env laden..."
+Write-INFO "[1/6] .env laden..."
 $envFile = Join-Path $ScriptDir ".env"
 $envVars = @{}
 if (Test-Path $envFile) {
@@ -116,103 +102,33 @@ if (Test-Path $envFile) {
 }
 
 # ══════════════════════════════════════════════════════════════
-# [2] Provider ermitteln
+# [2] Credentials und URL ermitteln (Senity Chat Proxy — fest)
 # ══════════════════════════════════════════════════════════════
 Write-Sep
-Write-INFO "[2/7] Provider ermitteln..."
-$modeFlags = @()
-if ($Proxy)     { $modeFlags += "proxy" }
-if ($Senity)    { $modeFlags += "senity" }
-if ($Msh)       { $modeFlags += "msh" }
-if ($Anthropic) { $modeFlags += "anthropic" }
-if ($Ollama)    { $modeFlags += "ollama" }
-if ($modeFlags.Count -gt 1) {
-    Exit-Error "Mehrere Provider-Flags gesetzt ($($modeFlags -join ', ')). Bitte nur einen angeben: --proxy, --senity, --msh, --anthropic oder --ollama"
-}
-$Mode = if ($modeFlags.Count -eq 1) { $modeFlags[0] } else { "proxy" }
-Write-OK "Modus: $Mode"
+Write-INFO "[2/6] Credentials pruefen (Senity Chat Proxy)..."
 
-# ══════════════════════════════════════════════════════════════
-# [3] Credentials und URL ermitteln
-# ══════════════════════════════════════════════════════════════
-Write-Sep
-Write-INFO "[3/7] Credentials pruefen..."
-$token        = ""
-$baseUrl      = ""
+$token = $envVars['SENITY_CHAT_PROXY_KEY']
+if (-not $token) { $token = $env:SENITY_CHAT_PROXY_KEY }
+if (-not $token) {
+    Exit-Error "SENITY_CHAT_PROXY_KEY nicht gesetzt.`nBitte in .env eintragen: SENITY_CHAT_PROXY_KEY=<dein-container-key>"
+}
+Write-OK "SENITY_CHAT_PROXY_KEY: gesetzt (Laenge: $($token.Length))"
+
+if ($token -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
+    Write-OK "Key-Format: UUID (gueltig)"
+} elseif ($token -match '^[0-9a-fA-F]{64}$') {
+    Write-OK "Key-Format: 64-Hex (gueltig)"
+} else {
+    Write-WARN "Key-Format: unbekannt (Laenge=$($token.Length))"
+    Write-INFO "Erwartet: UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) oder 64-Hex"
+}
+
+$baseUrl = $envVars['SENITY_CHAT_PROXY_URL']
+if (-not $baseUrl) { $baseUrl = $env:SENITY_CHAT_PROXY_URL }
+if (-not $baseUrl) { $baseUrl = "https://sdr.senity.ai/api/claude-proxy" }
+Write-OK "Proxy-URL: $baseUrl"
+
 $defaultModel = "claude-sonnet-4-6"
-
-switch ($Mode) {
-    "proxy" {
-        $token = $envVars['SENITY_CHAT_PROXY_KEY']
-        if (-not $token) { $token = $env:SENITY_CHAT_PROXY_KEY }
-        if (-not $token) {
-            Exit-Error "SENITY_CHAT_PROXY_KEY nicht gesetzt.`nBitte in .env eintragen: SENITY_CHAT_PROXY_KEY=<dein-container-key>"
-        }
-        Write-OK "SENITY_CHAT_PROXY_KEY: gesetzt (Laenge: $($token.Length))"
-
-        if ($token -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
-            Write-OK "Key-Format: UUID (gueltig)"
-        } elseif ($token -match '^[0-9a-fA-F]{64}$') {
-            Write-OK "Key-Format: 64-Hex (gueltig)"
-        } else {
-            Write-WARN "Key-Format: unbekannt (Laenge=$($token.Length))"
-            Write-INFO "Erwartet: UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) oder 64-Hex"
-        }
-
-        $baseUrl = $envVars['SENITY_CHAT_PROXY_URL']
-        if (-not $baseUrl) { $baseUrl = "https://sdr.senity.ai/api/claude-proxy" }
-        $defaultModel = "claude-sonnet-4-6"
-        Write-OK "Proxy-URL: $baseUrl"
-    }
-    "senity" {
-        $token = $envVars['SENITY_OLLAMA_API_KEY']
-        if (-not $token) { $token = $env:SENITY_OLLAMA_API_KEY }
-        if (-not $token) {
-            Exit-Error "SENITY_OLLAMA_API_KEY nicht gesetzt.`nBitte in .env eintragen: SENITY_OLLAMA_API_KEY=<key>"
-        }
-        Write-OK "SENITY_OLLAMA_API_KEY: gesetzt"
-        $baseUrl      = $envVars['SENITY_OLLAMA_URL']
-        if (-not $baseUrl) { $baseUrl = "https://ollama.senity.ai" }
-        $defaultModel = $envVars['SENITY_OLLAMA_MODEL']
-        if (-not $defaultModel) { $defaultModel = "qwen3:8b" }
-        Write-OK "Ollama-URL: $baseUrl"
-    }
-    "msh" {
-        $token = $envVars['MSH_API_KEY']
-        if (-not $token) { $token = $env:MSH_API_KEY }
-        if (-not $token) {
-            Exit-Error "MSH_API_KEY nicht gesetzt.`nBitte in .env eintragen: MSH_API_KEY=<key>"
-        }
-        Write-OK "MSH_API_KEY: gesetzt"
-        $baseUrl      = $envVars['MSH_API_URL']
-        if (-not $baseUrl) { $baseUrl = "https://gateway.missionstarkeshandwerk.de" }
-        $defaultModel = $envVars['MSH_VLLM_MODEL']
-        if (-not $defaultModel) { $defaultModel = "qwen3.6" }
-        Write-OK "MSH-URL: $baseUrl"
-    }
-    "anthropic" {
-        $token = $env:ANTHROPIC_API_KEY
-        if (-not $token) { $token = $envVars['ANTHROPIC_API_KEY'] }
-        if (-not $token) {
-            Exit-Error "ANTHROPIC_API_KEY nicht gesetzt.`nBitte in .env eintragen: ANTHROPIC_API_KEY=sk-ant-..."
-        }
-        Write-OK "ANTHROPIC_API_KEY: gesetzt"
-        $baseUrl      = ""
-        $defaultModel = "claude-sonnet-4-6"
-    }
-    "ollama" {
-        $token        = "ollama"
-        $baseUrl      = if ($Endpoint) { $Endpoint } else { "http://host.docker.internal:11434" }
-        $defaultModel = ""
-        Write-OK "Ollama-Endpoint: $baseUrl"
-        if (-not $Model) { Write-WARN "Kein --model angegeben fuer Ollama. Bitte Modell-ID uebergeben, z.B.: --model llama3.1" }
-    }
-    default {
-        Exit-Error "Unbekannter Modus '$Mode'. Gueltige Modi: proxy, senity, msh, anthropic, ollama"
-    }
-}
-
-# Modell
 if (-not $Model) { $Model = $defaultModel }
 Write-OK "Modell: $Model"
 
@@ -222,10 +138,10 @@ if ($NoYolo) { $yolo = $false }
 Write-OK "Yolo-Mode: $([bool]$yolo)$(if ($yolo) { '  (Achtung: ungefragte Ausfuehrung!)' })"
 
 # ══════════════════════════════════════════════════════════════
-# [4] Netzwerk pruefen
+# [3] Netzwerk pruefen
 # ══════════════════════════════════════════════════════════════
 Write-Sep
-Write-INFO "[4/7] Netzwerk pruefen..."
+Write-INFO "[3/6] Netzwerk pruefen..."
 if ($baseUrl -and $baseUrl -match '^https?://') {
     Write-DBG "Pruefe: $baseUrl"
     try {
@@ -268,17 +184,15 @@ if ($baseUrl -and $baseUrl -match '^https?://') {
     } catch {
         Write-WARN "Netzwerktest fehlgeschlagen: $($_.Exception.Message)"
     }
-} elseif ($Mode -eq "ollama") {
-    Write-INFO "Ollama (lokal) — Netzwerktest wird im Container durchgefuehrt"
 } else {
     Write-INFO "Kein externer Endpunkt — Netzwerktest uebersprungen"
 }
 
 # ══════════════════════════════════════════════════════════════
-# [5] TTY pruefen
+# [4] TTY pruefen
 # ══════════════════════════════════════════════════════════════
 Write-Sep
-Write-INFO "[5/7] TTY pruefen..."
+Write-INFO "[4/6] TTY pruefen..."
 Write-DBG "IsInputRedirected  : $([System.Console]::IsInputRedirected)"
 Write-DBG "IsOutputRedirected : $([System.Console]::IsOutputRedirected)"
 Write-DBG "IsErrorRedirected  : $([System.Console]::IsErrorRedirected)"
@@ -296,15 +210,9 @@ if (-not $hasTTY) {
         if (-not $scriptPath) { $scriptPath = Join-Path $ScriptDir "claude-senity.ps1" }
 
         $flagParts = @()
-        if ($Proxy)     { $flagParts += "-Proxy" }
-        if ($Senity)    { $flagParts += "-Senity" }
-        if ($Msh)       { $flagParts += "-Msh" }
-        if ($Anthropic) { $flagParts += "-Anthropic" }
-        if ($Ollama)    { $flagParts += "-Ollama" }
         if ($Yolo)      { $flagParts += "-Yolo" }
         if ($NoYolo)    { $flagParts += "-NoYolo" }
         if ($Model -and $Model -ne $defaultModel) { $flagParts += "-Model '$Model'" }
-        if ($Endpoint)  { $flagParts += "-Endpoint '$Endpoint'" }
         foreach ($r in $Rest) { $flagParts += $r }
         $argStr = $flagParts -join " "
 
@@ -343,10 +251,10 @@ Remove-Item -Path `$MyInvocation.MyCommand.Path -ErrorAction SilentlyContinue
 $safeUser = ($env:USERNAME -replace '[^a-zA-Z0-9_.-]', '_').ToLower()
 
 # ══════════════════════════════════════════════════════════════
-# [6] Docker pruefen
+# [5] Docker pruefen
 # ══════════════════════════════════════════════════════════════
 Write-Sep
-Write-INFO "[6/7] Docker pruefen..."
+Write-INFO "[5/6] Docker pruefen..."
 
 # Docker-CLI
 $dockerBin = Get-Command docker -ErrorAction SilentlyContinue
@@ -451,10 +359,10 @@ if ($zombies -and $LASTEXITCODE -eq 0) {
 }
 
 # ══════════════════════════════════════════════════════════════
-# [7] Container starten
+# [6] Container starten
 # ══════════════════════════════════════════════════════════════
 Write-Sep
-Write-INFO "[7/7] Container starten..."
+Write-INFO "[6/6] Container starten..."
 
 $containerName = "senity-workspace-$safeUser-$PID"
 $workspacePath = Join-Path $ScriptDir "workspace"
@@ -543,17 +451,13 @@ if (Test-Path $bindingsFile) {
 if (Test-Path $sshDir)    { $dockerArgs += @("-v", "$(ConvertTo-DockerPath $sshDir):/workspace/.ssh:ro") }
 if (Test-Path $gitconfig) { $dockerArgs += @("-v", "$(ConvertTo-DockerPath $gitconfig):/workspace/.gitconfig:ro") }
 
-# Umgebungsvariablen
-if ($baseUrl) { $dockerArgs += @("-e", "ANTHROPIC_BASE_URL=$baseUrl") }
+# Umgebungsvariablen — Senity Chat Proxy als ANTHROPIC_BASE_URL
 $dockerArgs += @(
+    "-e", "ANTHROPIC_BASE_URL=$baseUrl",
     "-e", "ANTHROPIC_API_KEY=$token",
     "-e", "HOME=/workspace",
     "-e", "TERM=xterm-256color"
 )
-
-if ($Mode -eq "ollama") {
-    $dockerArgs += @("--add-host", "host.docker.internal:host-gateway")
-}
 
 # Claude-Argumente
 $claudeArgs = @()
@@ -563,8 +467,8 @@ if ($yolo) { $claudeArgs += "--dangerously-skip-permissions" }
 # Start-Zusammenfassung
 Write-Host ""
 Write-Host "  ════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "  Provider  : $Mode" -ForegroundColor White
-Write-Host "  URL       : $(if ($baseUrl) { $baseUrl } else { '(direkte Anthropic API)' })" -ForegroundColor White
+Write-Host "  Provider  : Senity Chat Proxy" -ForegroundColor White
+Write-Host "  URL       : $baseUrl" -ForegroundColor White
 Write-Host "  Modell    : $Model" -ForegroundColor White
 Write-Host "  Yolo      : $([bool]$yolo)" -ForegroundColor White
 Write-Host "  Container : $containerName" -ForegroundColor White
@@ -591,7 +495,7 @@ if ($containerExit -eq 0 -or $containerExit -eq 130) {
     }
     Write-Host ""
     Write-INFO "Debug-Tipp: docker run --rm senity-claude:latest claude --version"
-    Write-INFO "Auth-Tipp : Proxy-Key in .env korrekt? (UUID-Format erwartet)"
+    Write-INFO "Auth-Tipp : SENITY_CHAT_PROXY_KEY in .env korrekt? (UUID-Format erwartet)"
 }
 Write-Host ""
 exit $containerExit

@@ -5,13 +5,12 @@
 # 1. Docker pruefen + auto-install
 # 2. Docker Image bauen
 # 3. Bindings.md pruefen/erstellen
-# 4. Provider + Modell + Yolo waehlen
+# 4. Modell + Yolo waehlen (Provider fix: Senity Chat Proxy)
 # 5. Container starten (mit config mount)
 # ══════════════════════════════════════════════════════════════
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MODE=""
 MODEL=""
 YOLO=false
 YOLO_FLAG_SET=false
@@ -21,20 +20,20 @@ NO_INTERACTIVE=false
 # ── Argumente parsen ──
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --mode|-m) MODE="$2"; shift 2 ;;
         --model) MODEL="$2"; shift 2 ;;
         --yolo) YOLO=true; YOLO_FLAG_SET=true; shift ;;
         --no-yolo) YOLO=false; YOLO_FLAG_SET=true; shift ;;
         --bindings) BINDINGS_FILE="$2"; shift 2 ;;
         --no-interactive) NO_INTERACTIVE=true; shift ;;
         -h|--help)
-            echo "Usage: ./setup.sh [--mode msh|anthropic|ollama] [--model NAME] [--yolo|--no-yolo]"
+            echo "Usage: ./setup.sh [--model NAME] [--yolo|--no-yolo] [--bindings FILE]"
             echo ""
-            echo "  --mode       msh (default), anthropic, ollama"
-            echo "  --model      Modell ueberschreiben"
+            echo "  --model      Modell ueberschreiben (Default: claude-sonnet-4-6)"
             echo "  --yolo       Yolo Mode an (default: aus)"
             echo "  --no-yolo    Yolo Mode aus"
             echo "  --bindings   Bindings.md Pfad"
+            echo ""
+            echo "Provider: Senity Chat Proxy (SENITY_CHAT_PROXY_URL / _KEY aus .env)"
             exit 0 ;;
         *) echo "Unbekannte Option: $1"; exit 1 ;;
     esac
@@ -92,7 +91,6 @@ if ! command -v docker &>/dev/null; then
     choice=$(read_choice "  Docker jetzt installieren?")
     if [[ "$choice" == "j" ]]; then
         echo ""
-        # Platform-spezifischer Install
         if command -v brew &>/dev/null; then
             echo "  [brew] Installiere Docker Desktop..."
             brew install --cask docker
@@ -126,7 +124,7 @@ echo "  Docker: $(docker --version)"
 
 # ── WSL-Dependencies pruefen ──
 if grep -qi Microsoft /proc/version 2>/dev/null; then
-    echo "  WSL erkannt — pruefe Docker-Docker-Dependencies..."
+    echo "  WSL erkannt, pruefe Docker-Dependencies..."
 
     missing=()
     for pkg in libgl1 libglib2.0-0 p11-kit kmod iptables bridge-utils; do
@@ -189,73 +187,22 @@ BINDINGS
 fi
 
 # ══════════════════════════════════════════════════════════════
-# [4/5] Provider, Modell, Yolo waehlen
+# [4/5] Modell + Yolo waehlen (Provider fix: Senity Chat Proxy)
 # ══════════════════════════════════════════════════════════════
-step 4 "Provider, Modell, Yolo"
+step 4 "Modell + Yolo"
 
-if [[ -z "$MODE" ]]; then
+token="${ENV_VARS[SENITY_CHAT_PROXY_KEY]:-${SENITY_CHAT_PROXY_KEY:-}}"
+if [[ -z "$token" ]]; then
     if $NO_INTERACTIVE; then
-        MODE="msh"
-    else
-        echo ""
-        echo "  Provider waehlen:"
-        echo "    1) MSH Gateway  — qwen3.6 (vLLM, am schnellsten)"
-        echo "    2) Anthropic    — claude-sonnet-4-6 (Echte API)"
-        echo "    3) Ollama       — freiwaehlbbar (lokal)"
-        echo ""
-        choice=$(read_choice "  Wahl (1/2/3)" "1")
-        case "$choice" in
-            1) MODE="msh" ;;
-            2) MODE="anthropic" ;;
-            3) MODE="ollama" ;;
-            *) MODE="msh"; echo "  Default: MSH Gateway" ;;
-        esac
-    fi
-fi
-
-token=""
-base_url=""
-default_model="qwen3.6"
-
-case "$MODE" in
-    msh)
-        token="${ENV_VARS[MSH_API_KEY]:-${ENV_VARS[MSH_VLLM_API_KEY]:-${LITELLM_MASTER_KEY:-}}}"
-        if [[ -z "$token" ]]; then
-            if $NO_INTERACTIVE; then
-                echo "  FEHLER: Kein Auth-Token gefunden."
-                exit 1
-            fi
-            read -r -p "  MSH API-Key: " token
-            if [[ -z "$token" ]]; then exit 1; fi
-        fi
-        base_url="${ENV_VARS[MSH_API_URL]:-https://gateway.missionstarkeshandwerk.de}"
-        default_model="${ENV_VARS[MSH_VLLM_MODEL]:-qwen3.6}"
-        echo "  Provider: MSH Gateway ($base_url)"
-        ;;
-    anthropic)
-        token="${ANTHROPIC_API_KEY:-${ENV_VARS[ANTHROPIC_API_KEY]:-}}"
-        if [[ -z "$token" ]]; then
-            if $NO_INTERACTIVE; then
-                echo "  FEHLER: ANTHROPIC_API_KEY nicht gesetzt."
-                exit 1
-            fi
-            read -r -p "  Anthropic API-Key (sk-ant-...): " token
-            if [[ -z "$token" ]]; then exit 1; fi
-        fi
-        base_url=""
-        default_model="claude-sonnet-4-6"
-        echo "  Provider: Anthropic API"
-        ;;
-    ollama)
-        token="ollama"
-        base_url="${CUSTOM_OLLAMA_URL:-http://host.docker.internal:11434}"
-        echo "  Provider: Ollama lokal"
-        ;;
-    *)
-        echo "  FEHLER: Unbekannter Modus '$MODE'."
+        echo "  FEHLER: SENITY_CHAT_PROXY_KEY nicht gesetzt."
         exit 1
-        ;;
-esac
+    fi
+    read -r -p "  Senity Chat Proxy Key: " token
+    if [[ -z "$token" ]]; then exit 1; fi
+fi
+base_url="${ENV_VARS[SENITY_CHAT_PROXY_URL]:-${SENITY_CHAT_PROXY_URL:-https://sdr.senity.ai/api/claude-proxy}}"
+default_model="claude-sonnet-4-6"
+echo "  Provider: Senity Chat Proxy ($base_url)"
 
 if [[ -z "$MODEL" ]]; then
     MODEL=$(read_choice "  Modell" "$default_model")
@@ -264,7 +211,6 @@ fi
 echo "  Modell: $MODEL"
 
 # Yolo — default: AUS (Sicherheit)
-# Wenn --yolo oder --no-yolo uebergeben, bleibt der Wert. Ansonsten interaktiv fragen.
 if [[ "$YOLO_FLAG_SET" == false ]]; then
     if $NO_INTERACTIVE; then
         YOLO=false
@@ -326,19 +272,13 @@ DOCKER_ARGS+=(-e "ANTHROPIC_API_KEY=${token}")
 DOCKER_ARGS+=(-e "HOME=/workspace")
 DOCKER_ARGS+=(-e "TERM=xterm-256color")
 
-# Ollama
-if [[ "$MODE" == "ollama" ]]; then
-    DOCKER_ARGS+=(--add-host host.docker.internal:host-gateway)
-fi
-
 echo ""
-echo "  Provider:  $MODE"
+echo "  Provider:  Senity Chat Proxy"
 echo "  Modell:    $MODEL"
 echo "  Yolo:      $YOLO"
 echo "  Container: $container_name"
 echo ""
 
-# Claude-Argumente NACH dem Image-Namen (nicht als Docker-Flags)
 CLAUDE_ARGS=("--model" "$MODEL")
 if $YOLO; then
     CLAUDE_ARGS+=("--dangerously-skip-permissions")

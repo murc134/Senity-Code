@@ -5,17 +5,15 @@
 # 2. Docker Image bauen
 # 3. Desktop-Verknuepfung erstellen
 # 4. Bindings.md pruefen/erstellen
-# 5. Provider + Modell + Yolo waehlen
+# 5. Modell + Yolo waehlen (Provider ist fix: Senity Chat Proxy)
 # 6. Container starten (mit config mount)
 # ══════════════════════════════════════════════════════════════
 param(
     [switch]$NoInteractive,
-    [string]$Mode,
     [string]$Model,
     [switch]$Yolo,
     [switch]$NoYolo,
-    [string]$BindingsFile,
-    [string]$Endpoint
+    [string]$BindingsFile
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,7 +51,6 @@ if (-not $dockerExists) {
         Write-Host ""
         Write-Host "  Installation starte..." -ForegroundColor Green
 
-        # winget versuchen
         $winget = Get-Command winget -ErrorAction SilentlyContinue
         if ($winget) {
             Write-Host "  [winget] Docker.DockerDesktop installieren..." -ForegroundColor Yellow
@@ -65,7 +62,6 @@ if (-not $dockerExists) {
             }
         }
 
-        # Browser-Download
         Write-Host ""
         Write-Host "  Bitte manuell installieren:" -ForegroundColor Yellow
         Write-Host "  https://docs.docker.com/desktop/install/windows-install/"
@@ -77,7 +73,6 @@ if (-not $dockerExists) {
             exit 1
         }
 
-        # Nochmal prüfen
         if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
             Write-Host "  Docker immer noch nicht gefunden." -ForegroundColor Red
             exit 1
@@ -188,9 +183,9 @@ if (-not $hasMounts) {
 }
 
 # ══════════════════════════════════════════════════════════════
-# [5/6] Provider, Modell, Yolo waehlen
+# [5/6] Modell + Yolo waehlen (Provider fix: Senity Chat Proxy)
 # ══════════════════════════════════════════════════════════════
-Write-Step 5 "Provider, Modell, Yolo"
+Write-Step 5 "Modell + Yolo"
 
 # .env lesen
 $envFile = Join-Path $ScriptDir ".env"
@@ -198,7 +193,7 @@ $envVars = @{}
 if (Test-Path $envFile) {
     Get-Content $envFile | ForEach-Object {
         $line = $_.Trim()
-        if ($line -eq '' -or $line -match '^#') { continue }
+        if ($line -eq '' -or $line -match '^#') { return }
         if ($line -match '^[^=]+=') {
             $idx = $line.IndexOf('=')
             $key = $line.Substring(0, $idx).Trim()
@@ -210,91 +205,21 @@ if (Test-Path $envFile) {
     }
 }
 
-# Modus ermitteln
-if (-not $Mode) {
+# Credentials: Senity Chat Proxy
+$token = $envVars['SENITY_CHAT_PROXY_KEY']
+if (-not $token) { $token = $env:SENITY_CHAT_PROXY_KEY }
+if (-not $token) {
     if ($NoInteractive) {
-        $Mode = "proxy"
-    } else {
-        Write-Host ""
-        Write-Host "  Provider waehlen:" -ForegroundColor White
-        Write-Host "    1) Senity Chat Proxy  — claude-sonnet-4-6 (Default)" -ForegroundColor White
-        Write-Host "    2) MSH Gateway        — qwen3.6 (vLLM)" -ForegroundColor White
-        Write-Host "    3) Anthropic          — claude-sonnet-4-6 (Echte API)" -ForegroundColor White
-        Write-Host "    4) Ollama             — freiwaehlbar (lokal)" -ForegroundColor White
-        Write-Host ""
-        $choice = Read-Host "  Wahl (1/2/3/4)"
-        switch ($choice) {
-            "1" { $Mode = "proxy" }
-            "2" { $Mode = "msh" }
-            "3" { $Mode = "anthropic" }
-            "4" { $Mode = "ollama" }
-            default { $Mode = "proxy"; Write-Host "  Default: Senity Chat Proxy" -ForegroundColor Yellow }
-        }
+        Write-Host "  FEHLER: SENITY_CHAT_PROXY_KEY nicht gesetzt." -ForegroundColor Red
+        exit 1
     }
+    $token = Read-Host "  Senity Chat Proxy Key eingeben"
+    if (-not $token) { exit 1 }
 }
-
-# Token + URL pro Modus
-$token = ""
-$baseUrl = ""
+$baseUrl = $envVars['SENITY_CHAT_PROXY_URL']
+if (-not $baseUrl) { $baseUrl = "https://sdr.senity.ai/api/claude-proxy" }
 $defaultModel = "claude-sonnet-4-6"
-
-switch ($Mode) {
-    "proxy" {
-        $token = $envVars['SENITY_CHAT_PROXY_KEY']
-        if (-not $token) { $token = $env:SENITY_CHAT_PROXY_KEY }
-        if (-not $token) {
-            if ($NoInteractive) {
-                Write-Host "  FEHLER: SENITY_CHAT_PROXY_KEY nicht gesetzt." -ForegroundColor Red
-                exit 1
-            }
-            $token = Read-Host "  Senity Chat Proxy Key eingeben"
-            if (-not $token) { exit 1 }
-        }
-        $baseUrl = $envVars['SENITY_CHAT_PROXY_URL']
-        if (-not $baseUrl) { $baseUrl = "https://sdr.senity.ai/api/claude-proxy" }
-        $defaultModel = "claude-sonnet-4-6"
-        Write-Host "  Provider: Senity Chat Proxy ($baseUrl)" -ForegroundColor Green
-    }
-    "msh" {
-        $token = $envVars['MSH_API_KEY']
-        if (-not $token) { $token = $envVars['MSH_VLLM_API_KEY'] }
-        if (-not $token) { $token = $env:LITELLM_MASTER_KEY }
-        if (-not $token) {
-            if ($NoInteractive) {
-                Write-Host "  FEHLER: Kein Auth-Token gefunden (MSH_API_KEY)." -ForegroundColor Red
-                exit 1
-            }
-            $token = Read-Host "  MSH API-Key eingeben"
-            if (-not $token) { exit 1 }
-        }
-        $baseUrl = $envVars['MSH_API_URL']
-        if (-not $baseUrl) { $baseUrl = "https://gateway.missionstarkeshandwerk.de" }
-        $defaultModel = $envVars['MSH_VLLM_MODEL']
-        if (-not $defaultModel) { $defaultModel = "qwen3.6" }
-        Write-Host "  Provider: MSH Gateway ($baseUrl)" -ForegroundColor Green
-    }
-    "anthropic" {
-        $token = $env:ANTHROPIC_API_KEY
-        if (-not $token) { $token = $envVars['ANTHROPIC_API_KEY'] }
-        if (-not $token) {
-            if ($NoInteractive) {
-                Write-Host "  FEHLER: ANTHROPIC_API_KEY nicht gesetzt." -ForegroundColor Red
-                exit 1
-            }
-            $token = Read-Host "  Anthropic API-Key (sk-ant-...) eingeben"
-            if (-not $token) { exit 1 }
-        }
-        $baseUrl = ""
-        $defaultModel = "claude-sonnet-4-6"
-        Write-Host "  Provider: Anthropic API" -ForegroundColor Green
-    }
-    "ollama" {
-        $token = "ollama"
-        $baseUrl = $Endpoint
-        if (-not $baseUrl) { $baseUrl = "http://host.docker.internal:11434" }
-        Write-Host "  Provider: Ollama lokal ($baseUrl)" -ForegroundColor Green
-    }
-}
+Write-Host "  Provider: Senity Chat Proxy ($baseUrl)" -ForegroundColor Green
 
 # Modell
 if (-not $Model) {
@@ -307,7 +232,7 @@ if (-not $Model) {
 }
 Write-Host "  Modell: $Model" -ForegroundColor Green
 
-# Yolo — default: AUS (Sicherheit)
+# Yolo
 $yolo = $false
 if ($Yolo) { $yolo = $true }
 if ($NoYolo) { $yolo = $false }
@@ -334,13 +259,11 @@ Write-Step 6 "Container starten"
 $containerName = "senity-workspace-$($env:USERNAME)-$PID"
 $workspacePath = Join-Path $ScriptDir "workspace"
 
-# Workspace-Verzeichnis erstellen
 if (-not (Test-Path $workspacePath)) {
     New-Item -ItemType Directory -Path $workspacePath -Force | Out-Null
     Write-Host "  Workspace-Verzeichnis erstellt: $workspacePath" -ForegroundColor Yellow
 }
 
-# Config-Verzeichnis erstellen (fuer host config mount)
 $claudeDir = Join-Path $ScriptDir ".claude"
 if (-not (Test-Path $claudeDir)) {
     New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
@@ -353,7 +276,6 @@ $dockerArgs = @(
     "-w", "/workspace"
 )
 
-# Config mount: HOME=/workspace, daher .claude nach /workspace/.claude
 $dockerArgs += "-v"
 $dockerArgs += "${claudeDir}:/workspace/.claude"
 
@@ -399,20 +321,13 @@ $dockerArgs += "HOME=/workspace"
 $dockerArgs += "-e"
 $dockerArgs += "TERM=xterm-256color"
 
-# Ollama braucht host.docker.internal
-if ($Mode -eq "ollama") {
-    $dockerArgs += "--add-host"
-    $dockerArgs += "host.docker.internal:host-gateway"
-}
-
 Write-Host ""
-Write-Host "  Provider:  $Mode" -ForegroundColor Cyan
+Write-Host "  Provider:  Senity Chat Proxy" -ForegroundColor Cyan
 Write-Host "  Modell:    $Model" -ForegroundColor Cyan
 Write-Host "  Yolo:      $([bool]$yolo)" -ForegroundColor Cyan
 Write-Host "  Container: $containerName" -ForegroundColor Cyan
 Write-Host ""
 
-# Claude-Argumente NACH dem Image-Namen (nicht als Docker-Flags)
 $claudeArgs = @("--model", $Model)
 if ($yolo) {
     $claudeArgs += "--dangerously-skip-permissions"

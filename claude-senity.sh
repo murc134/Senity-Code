@@ -3,15 +3,13 @@
 # claude-senity.sh — Senity Workspace (Container Start, Linux/Mac)
 #
 # Usage:
-#   ./claude-senity.sh                              # Senity Claude-Proxy (Default)
-#   ./claude-senity.sh --msh                        # MSH Gateway (qwen3.6)
-#   ./claude-senity.sh --anthropic --yolo           # Direkt Anthropic + Yolo
-#   ./claude-senity.sh --ollama --model llama3.1    # Lokaler Ollama
+#   ./claude-senity.sh                              # Senity Chat Proxy
+#   ./claude-senity.sh --yolo                       # Mit Yolo-Mode
+#   ./claude-senity.sh --model claude-opus-4-7      # Modell ueberschreiben
 # ══════════════════════════════════════════════════════════════
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MODE=""
 MODEL=""
 YOLO=false
 EXTRA=()
@@ -20,27 +18,17 @@ EXTRA=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -m|--model)    MODEL="$2"; shift 2 ;;
-        -e|--endpoint) GATEWAY_URL="$2"; shift 2 ;;
-        --proxy)       MODE="proxy"; shift ;;
-        --msh)         MODE="msh"; shift ;;
-        --senity)      MODE="senity"; shift ;;
-        --anthropic)   MODE="anthropic"; shift ;;
-        --ollama)      MODE="ollama"; shift ;;
         --yolo)        YOLO=true; shift ;;
         --no-yolo)     YOLO=false; shift ;;
         -h|--help)
             echo "Usage: ./claude-senity.sh [OPTIONS]"
             echo ""
-            echo "  --proxy         Senity Chat Proxy (default)"
-            echo "  --msh           MSH Gateway (qwen3.6)"
-            echo "  --senity        Senity Ollama Cloud (qwen3:8b)"
-            echo "  --anthropic     Eigenes Anthropic API"
-            echo "  --ollama        Lokaler Ollama"
-            echo "  --model NAME    Modell ueberschreiben"
+            echo "  --model NAME    Modell ueberschreiben (Default: claude-sonnet-4-6)"
             echo "  --yolo          Yolo Mode (default: aus)"
             echo "  --no-yolo       Yolo Mode deaktiviert"
-            echo "  --endpoint URL  Custom Endpoint (Ollama)"
             echo "  -h, --help      Diese Hilfe"
+            echo ""
+            echo "Provider: Senity Chat Proxy (SENITY_CHAT_PROXY_URL / _KEY aus .env)"
             exit 0 ;;
         *) EXTRA+=("$1"); shift ;;
     esac
@@ -61,62 +49,14 @@ if [[ -f "$ENV_FILE" ]]; then
     done < "$ENV_FILE"
 fi
 
-# ── Modus ermitteln ──
-if [[ -z "$MODE" ]]; then
-    MODE="proxy"
+# ── Credentials (Senity Chat Proxy) ──
+token="${ENV_VARS[SENITY_CHAT_PROXY_KEY]:-${SENITY_CHAT_PROXY_KEY:-}}"
+if [[ -z "$token" ]]; then
+    echo "FEHLER: SENITY_CHAT_PROXY_KEY nicht gesetzt (weder in .env noch in Environment)."
+    exit 1
 fi
-
-# ── Werte pro Modus ──
-token=""
-base_url=""
+base_url="${ENV_VARS[SENITY_CHAT_PROXY_URL]:-${SENITY_CHAT_PROXY_URL:-https://sdr.senity.ai/api/claude-proxy}}"
 default_model="claude-sonnet-4-6"
-
-case "$MODE" in
-    proxy)
-        token="${ENV_VARS[SENITY_CHAT_PROXY_KEY]:-${SENITY_CHAT_PROXY_KEY:-}}"
-        if [[ -z "$token" ]]; then
-            echo "FEHLER: SENITY_CHAT_PROXY_KEY nicht gesetzt."
-            exit 1
-        fi
-        base_url="${ENV_VARS[SENITY_CHAT_PROXY_URL]:-https://api.senity.ai/api/claude-proxy}"
-        default_model="claude-sonnet-4-6"
-        ;;
-    senity)
-        token="${ENV_VARS[SENITY_OLLAMA_API_KEY]:-${SENITY_OLLAMA_API_KEY:-}}"
-        if [[ -z "$token" ]]; then
-            echo "FEHLER: SENITY_OLLAMA_API_KEY nicht gesetzt."
-            exit 1
-        fi
-        base_url="${ENV_VARS[SENITY_OLLAMA_URL]:-https://ollama.senity.ai}"
-        default_model="${ENV_VARS[SENITY_OLLAMA_MODEL]:-qwen3:8b}"
-        ;;
-    msh)
-        token="${ENV_VARS[MSH_API_KEY]:-${MSH_API_KEY:-}}"
-        if [[ -z "$token" ]]; then
-            echo "FEHLER: MSH_API_KEY nicht gesetzt."
-            exit 1
-        fi
-        base_url="${ENV_VARS[MSH_API_URL]:-https://gateway.missionstarkeshandwerk.de}"
-        default_model="${ENV_VARS[MSH_VLLM_MODEL]:-qwen3.6}"
-        ;;
-    anthropic)
-        token="${ANTHROPIC_API_KEY:-${ENV_VARS[ANTHROPIC_API_KEY]:-}}"
-        if [[ -z "$token" ]]; then
-            echo "FEHLER: ANTHROPIC_API_KEY nicht gesetzt."
-            exit 1
-        fi
-        base_url=""
-        default_model="claude-sonnet-4-6"
-        ;;
-    ollama)
-        token="ollama"
-        base_url="${GATEWAY_URL:-http://host.docker.internal:11434}"
-        ;;
-    *)
-        echo "FEHLER: Unbekannter Modus '$MODE'. Waehle: proxy, senity, msh, anthropic, ollama"
-        exit 1
-        ;;
-esac
 
 if [[ -z "$MODEL" ]]; then
     MODEL="$default_model"
@@ -219,10 +159,6 @@ DOCKER_ARGS+=(-e "ANTHROPIC_BASE_URL=${base_url}")
 DOCKER_ARGS+=(-e "ANTHROPIC_API_KEY=${token}")
 DOCKER_ARGS+=(-e "HOME=/workspace")
 DOCKER_ARGS+=(-e "TERM=xterm-256color")
-
-if [[ "$MODE" == "ollama" ]]; then
-    DOCKER_ARGS+=(--add-host host.docker.internal:host-gateway)
-fi
 
 # Claude-Argumente NACH dem Image-Namen (nicht als Docker-Flags)
 CLAUDE_ARGS=("--model" "$MODEL")
