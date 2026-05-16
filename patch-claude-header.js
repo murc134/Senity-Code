@@ -67,6 +67,12 @@ const textReplacements = [
     ['API Usage Billing',          'Senity Chat Proxy'],
     ['Welcome back!',              'Willkommen!'],     // 13B -> 11B + 2 Spaces padding
     ["What's new",                 'Neuheiten'],       // 10B -> 9B + 1 Space padding
+    // Welcome-Box-Titel: "Claude Code" (11B) -> "Senity Wksp" (11B). Voller String
+    // "Senity Workspace v1.0" passt nicht in den Binary-Slot ohne Code-Surgery.
+    [',"Claude Code")',            ',"Senity Wksp")'], // 15B -> 15B (exakt)
+    // Version-Konstante: "2.1.143" (7B) -> "1.0    " (7B mit Trailing-Spaces).
+    // dimColor im Welcome-Box rendert Trailing-Spaces unsichtbar.
+    ['VERSION:"2.1.143"',          'VERSION:"1.0    "'], // 17B -> 17B
 ];
 
 // ─── Farb-Ersetzungen ───────────────────────────────────────────
@@ -74,6 +80,14 @@ const textReplacements = [
 // plus diverse 256-color und truecolor Codes in legacy-Builds. Wir
 // ersetzen alle bekannten Varianten auf Senity-Lila (PRIMARY).
 const colorReplacements = [
+    // ─ Named theme colors (welcome-box border/title/headlines) ─
+    // Claude Code 2.x nutzt "claude" / "claudeShimmer" Theme-Tokens, die
+    // intern als "rgb(R,G,B)"-Strings vorliegen (3 Theme-Varianten).
+    ['rgb(215,119,87)',  `rgb(${PR.replace(/;/g, ',')})`],  // claude (light + dark)
+    ['rgb(245,149,117)', `rgb(${SR.replace(/;/g, ',')})`],  // claudeShimmer light
+    ['rgb(235,159,127)', `rgb(${SR.replace(/;/g, ',')})`],  // claudeShimmer dark
+    ['rgb(255,153,51)',  `rgb(${PR.replace(/;/g, ',')})`],  // claude bright
+    ['rgb(255,183,101)', `rgb(${SR.replace(/;/g, ',')})`],  // claudeShimmer bright
     // ─ Hex-Literale (chalk.hex('#...')) ─
     ['#da7756', PH.toLowerCase()],   // aktueller Anthropic-Orange
     ['#DA7756', PH],
