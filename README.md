@@ -3,27 +3,34 @@
 Startet Claude Code in einem Docker Container, universell auf Windows, Linux und macOS.
 Einziger Provider: **Senity Chat Proxy**.
 
+## Voraussetzungen
+
+- **Docker Desktop** muss installiert und laufend sein.
+  - Windows: `winget install Docker.DockerDesktop`
+  - macOS: `brew install --cask docker`
+  - Linux: https://docs.docker.com/engine/install/
+- **Windows zusaetzlich:** PowerShell 7 (`pwsh`). Der `.bat`-Launcher installiert es bei Bedarf automatisch via winget.
+
 ## Schnellstart
 
 ```powershell
-# 1. Setup ausfuehren (baut Image, prueft Docker, fragt Modell + Yolo)
-.\setup.bat
-
-# 2. Direkt starten
+# Windows
 .\claude-senity.bat
 .\claude-senity.bat --yolo
+.\claude-senity.bat --create-shortcut   # Desktop-Verknuepfung einmalig anlegen
+
+# Linux / macOS
 ./claude-senity.sh
 ./claude-senity.sh --yolo
 ```
 
-## Was das macht
+## Was beim ersten Start passiert
 
-1. Prueft Docker Desktop (installiert automatisch falls nicht vorhanden)
-2. Baut das Docker Image `senity-claude:latest`
-3. Erstellt Desktop-Verknuepfung (Windows)
-4. Prueft/erstellt Bindings.md
-5. Liest Senity Chat Proxy Credentials aus `.env`, fragt Modell + Yolo
-6. Startet Claude Code im Container mit allen Mounts
+1. Docker-CLI + Daemon werden geprueft (Docker Desktop wird ggf. gestartet)
+2. Image `senity-claude:latest` wird gebaut, falls noch nicht vorhanden
+3. `Bindings.md` wird mit Default-Inhalt angelegt, falls fehlend
+4. `workspace/` und `.claude/` werden angelegt
+5. Container startet mit allen Mounts und Senity-Proxy-Credentials
 
 ## Provider
 
@@ -31,14 +38,16 @@ Es gibt nur einen Provider: **Senity Chat Proxy**.
 
 | Provider | Default-Modell | Endpunkt | Token |
 |---|---|---|---|
-| Senity Chat Proxy | `claude-sonnet-4-6` | `SENITY_CHAT_PROXY_URL` (Default: `https://sdr.senity.ai/api/claude-proxy`) | `SENITY_CHAT_PROXY_KEY` |
+| Senity Chat Proxy | `Senity Proxy` (intern: `qwen3.6:35b`) | `SENITY_CHAT_PROXY_URL` (Default: `https://sdr.senity.ai/api/claude-proxy`) | `SENITY_CHAT_PROXY_KEY` |
 
 Modell ueberschreiben:
 
 ```bash
-./claude-senity.sh --model claude-opus-4-7
-.\claude-senity.bat --model claude-opus-4-7
+./claude-senity.sh --model qwen3.6:35b
+.\claude-senity.bat --model qwen3.6:35b
 ```
+
+Hinweis: Der Senity Chat Proxy routet alle Modell-Strings intern uebers MSH-Gateway (`qwen3.6@coder-agent`). Der `--model`-Wert beeinflusst nur die Anzeige im Claude-Code-Header.
 
 ## Mount-Pfade
 
@@ -90,32 +99,24 @@ Image wird einmalig gebaut: `docker build -t senity-claude:latest .`
 
 ## Yolo Mode
 
-Standard deaktiviert (Sicherheit). Aktivieren:
+Standard deaktiviert (Sicherheit). Aktivieren / Deaktivieren:
 
 ```bash
-.\setup.bat --yolo
-./setup.sh --yolo
-
 .\claude-senity.bat --yolo
 ./claude-senity.sh --yolo
-```
-
-Claude Code fuehrt Commands ohne Bestaetigung aus. Deaktivieren:
-
-```bash
-.\setup.bat --no-yolo
-./setup.sh --no-yolo
 
 .\claude-senity.bat --no-yolo
 ./claude-senity.sh --no-yolo
 ```
 
+Im Yolo-Mode fuehrt Claude Code Commands ohne Bestaetigung aus.
+
 ## Troubleshooting
 
 **Docker Desktop nicht gefunden**
-- Wird automatisch installiert (winget / brew / apt / yum)
-- Manuell: https://docs.docker.com/desktop/install/windows-install/
-- Oder: `winget install Docker.DockerDesktop`
+- Manuell installieren: https://docs.docker.com/desktop/install/windows-install/
+- Oder: `winget install Docker.DockerDesktop` (Windows) / `brew install --cask docker` (macOS)
+- Der Launcher startet Docker Desktop automatisch, wenn es bereits installiert, aber noch nicht laufend ist.
 
 **SENITY_CHAT_PROXY_KEY nicht gesetzt**
 - `.env` im Script-Verzeichnis pruefen

@@ -2,14 +2,16 @@
 # claude-senity.ps1 — Senity Workspace (Container Start)
 #
 # Usage:
-#   .\claude-senity.ps1                # Senity Chat Proxy (einziger Provider)
-#   .\claude-senity.ps1 --yolo         # Yolo Mode (ungefragte Ausfuehrung)
-#   .\claude-senity.ps1 --model NAME   # Modell ueberschreiben
+#   .\claude-senity.ps1                    # Senity Chat Proxy (einziger Provider)
+#   .\claude-senity.ps1 --yolo             # Yolo Mode (ungefragte Ausfuehrung)
+#   .\claude-senity.ps1 --model NAME       # Modell ueberschreiben
+#   .\claude-senity.ps1 --create-shortcut  # Desktop-Verknuepfung erstellen
 # ══════════════════════════════════════════════════════════════
 param(
     [switch]$Yolo,
     [switch]$NoYolo,
     [string]$Model,
+    [switch]$CreateShortcut,
     [switch]$Help,
     [Parameter(ValueFromRemainingArguments=$true)]
     [string[]]$Rest
@@ -25,8 +27,8 @@ if (-not $ScriptDir) { $ScriptDir = $PWD.Path }
 # ── Ausgabe-Hilfsfunktionen ──
 function Write-OK   { param([string]$m) Write-Host "  [OK]   $m" -ForegroundColor Green }
 function Write-FAIL { param([string]$m) Write-Host "  [FAIL] $m" -ForegroundColor Red }
-function Write-WARN { param([string]$m) Write-Host "  [WARN] $m" -ForegroundColor Yellow }
-function Write-INFO { param([string]$m) Write-Host "  [INFO] $m" -ForegroundColor Cyan }
+function Write-WARN { param([string]$m) Write-Host "  [WARN] $m" -ForegroundColor Magenta }
+function Write-INFO { param([string]$m) Write-Host "  [INFO] $m" -ForegroundColor Magenta }
 function Write-DBG  { param([string]$m) Write-Host "  [DBG]  $m" -ForegroundColor DarkGray }
 function Write-Sep  { Write-Host "  ────────────────────────────────────────" -ForegroundColor DarkGray }
 function ConvertTo-DockerPath { param([string]$p) return ($p -replace '\\', '/') }
@@ -44,11 +46,116 @@ function Exit-Error {
     exit $code
 }
 
-# ── Banner (ALLERERSTE Ausgabe — so sieht man sofort ob das Script laeuft) ──
+# ── .env-Datei lesen/schreiben ──
+function Read-EnvFile {
+    param([string]$Path)
+    $vars = @{}
+    if (-not (Test-Path $Path)) { return $vars }
+    Get-Content $Path -Encoding UTF8 | ForEach-Object {
+        $line = $_.Trim()
+        if ($line -eq '' -or $line -match '^#') { return }
+        if ($line -match '^[^=]+=') {
+            $idx = $line.IndexOf('=')
+            $key = $line.Substring(0, $idx).Trim()
+            $val = $line.Substring($idx + 1).Trim()
+            if ($val -match '^".*"$')      { $val = $val.Substring(1, $val.Length - 2) }
+            elseif ($val -match "^'.*'$")  { $val = $val.Substring(1, $val.Length - 2) }
+            $vars[$key] = $val
+        }
+    }
+    return $vars
+}
+
+function Set-EnvVar {
+    param([string]$Path, [string]$Key, [string]$Value)
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $lines = @()
+    if (Test-Path $Path) { $lines = @(Get-Content $Path -Encoding UTF8) }
+
+    $pattern  = "^\s*$([regex]::Escape($Key))\s*="
+    $newLines = @()
+    $found    = $false
+    foreach ($line in $lines) {
+        if ($line -match $pattern) {
+            $newLines += "$Key=$Value"
+            $found = $true
+        } else {
+            $newLines += $line
+        }
+    }
+    if (-not $found) {
+        if ($newLines.Count -gt 0 -and $newLines[$newLines.Count - 1] -ne '') {
+            $newLines += ''
+        }
+        $newLines += "$Key=$Value"
+    }
+    Set-Content -Path $Path -Value $newLines -Encoding UTF8
+}
+
+# ── Senity-Key gegen Proxy validieren ──
+# Rueckgabe: Hashtable @{ valid=$bool; status=<int>; reason=<string> }
+function Test-SenityKey {
+    param([string]$Url, [string]$Key)
+    $endpoint = $Url.TrimEnd('/') + '/v1/messages'
+    $body     = '{"model":"claude-3-5-haiku-latest","max_tokens":1,"messages":[{"role":"user","content":"ping"}]}'
+    try {
+        $req = [System.Net.HttpWebRequest]::Create($endpoint)
+        $req.Method        = 'POST'
+        $req.Timeout       = 15000
+        $req.ContentType   = 'application/json'
+        $req.UserAgent     = 'senity-workspace/1.0'
+        $req.Headers.Add('x-api-key', $Key)
+        $req.Headers.Add('anthropic-version', '2023-06-01')
+        $bytes = [Text.Encoding]::UTF8.GetBytes($body)
+        $req.ContentLength = $bytes.Length
+        $stream = $req.GetRequestStream()
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Close()
+        try {
+            $resp = $req.GetResponse()
+            $sc   = [int]$resp.StatusCode
+            $resp.Close()
+            return @{ valid = $true; status = $sc; reason = "HTTP $sc" }
+        } catch [System.Net.WebException] {
+            $we = $_.Exception
+            if ($we.Response) {
+                $sc = [int]$we.Response.StatusCode
+                $we.Response.Close()
+                if ($sc -eq 401 -or $sc -eq 403) {
+                    return @{ valid = $false; status = $sc; reason = "Unauthorized (HTTP $sc) - Key ungueltig" }
+                } elseif ($sc -eq 404) {
+                    return @{ valid = $false; status = $sc; reason = "Endpoint nicht gefunden (HTTP 404) - URL pruefen" }
+                } else {
+                    # 400, 422, 429, 500 etc.: Auth selbst hat geklappt; akzeptieren
+                    return @{ valid = $true; status = $sc; reason = "Auth OK (HTTP $sc)" }
+                }
+            } else {
+                $msg = $we.Message
+                $st  = $we.Status
+                if ($st -eq [System.Net.WebExceptionStatus]::NameResolutionFailure) {
+                    return @{ valid = $false; status = 0; reason = "DNS-Fehler - URL nicht aufloesbar" }
+                } elseif ($st -eq [System.Net.WebExceptionStatus]::ConnectFailure) {
+                    return @{ valid = $false; status = 0; reason = "Verbindung abgelehnt - Server nicht erreichbar" }
+                } elseif ($st -eq [System.Net.WebExceptionStatus]::Timeout) {
+                    return @{ valid = $false; status = 0; reason = "Timeout - Server antwortet nicht" }
+                } else {
+                    return @{ valid = $false; status = 0; reason = "Netzwerkfehler: $msg" }
+                }
+            }
+        }
+    } catch {
+        return @{ valid = $false; status = 0; reason = "Unerwarteter Fehler: $($_.Exception.Message)" }
+    }
+}
+
+# ── Banner (ALLERERSTE Ausgabe) ──
 Write-Host ""
-Write-Host "  ╔══════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "  ║   Senity Workspace  —  Claude Code CLI   ║" -ForegroundColor Cyan
-Write-Host "  ╚══════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host "  ╔══════════════════════════════════════════╗" -ForegroundColor Magenta
+Write-Host "  ║   Senity Workspace  —  Claude Code CLI   ║" -ForegroundColor Magenta
+Write-Host "  ╚══════════════════════════════════════════╝" -ForegroundColor Magenta
 Write-Host ""
 Write-DBG "ScriptDir  : $ScriptDir"
 Write-DBG "PowerShell : $($PSVersionTable.PSVersion)"
@@ -63,144 +170,46 @@ if ($Help) {
     Write-Host "  Provider: Senity Chat Proxy (fest, kein anderer Provider verfuegbar)" -ForegroundColor White
     Write-Host ""
     Write-Host "  Optionen:" -ForegroundColor White
-    Write-Host "    --model NAME     Modell ueberschreiben (Default: claude-sonnet-4-6)" -ForegroundColor White
-    Write-Host "    --yolo           Yolo Mode (ungefragte Ausfuehrung)" -ForegroundColor White
-    Write-Host "    --no-yolo        Yolo Mode explizit deaktivieren" -ForegroundColor White
-    Write-Host "    --help           Diese Hilfe" -ForegroundColor White
+    Write-Host "    --model NAME       Modell ueberschreiben (Default: Senity Proxy)" -ForegroundColor White
+    Write-Host "    --yolo             Yolo Mode (ungefragte Ausfuehrung)" -ForegroundColor White
+    Write-Host "    --no-yolo          Yolo Mode explizit deaktivieren" -ForegroundColor White
+    Write-Host "    --create-shortcut  Desktop-Verknuepfung erstellen und beenden" -ForegroundColor White
+    Write-Host "    --help             Diese Hilfe" -ForegroundColor White
     Write-Host ""
     exit 0
 }
 
-# ══════════════════════════════════════════════════════════════
-# [1] .env laden
-# ══════════════════════════════════════════════════════════════
-Write-INFO "[1/6] .env laden..."
-$envFile = Join-Path $ScriptDir ".env"
-$envVars = @{}
-if (Test-Path $envFile) {
-    Write-OK ".env gefunden: $envFile"
-    $loadedCount = 0
-    Get-Content $envFile -Encoding UTF8 | ForEach-Object {
-        $line = $_.Trim()
-        if ($line -eq '' -or $line -match '^#') { return }
-        if ($line -match '^[^=]+=') {
-            $idx  = $line.IndexOf('=')
-            $key  = $line.Substring(0, $idx).Trim()
-            $val  = $line.Substring($idx + 1).Trim()
-            if ($val -match '^".*"$') { $val = $val.Substring(1, $val.Length - 2) }
-            elseif ($val -match "^'.*'$") { $val = $val.Substring(1, $val.Length - 2) }
-            $envVars[$key] = $val
-            $loadedCount++
-            $display = if ($key -match 'KEY|SECRET|TOKEN|PASSWORD') { '[REDACTED]' } else { $val }
-            Write-DBG "  $key = $display"
-        }
-    }
-    Write-OK "$loadedCount Variablen geladen"
-} else {
-    Write-WARN ".env nicht gefunden: $envFile"
-    Write-INFO "Fahre ohne .env fort — System-Umgebungsvariablen werden geprueft"
-}
-
-# ══════════════════════════════════════════════════════════════
-# [2] Credentials und URL ermitteln (Senity Chat Proxy — fest)
-# ══════════════════════════════════════════════════════════════
-Write-Sep
-Write-INFO "[2/6] Credentials pruefen (Senity Chat Proxy)..."
-
-$token = $envVars['SENITY_CHAT_PROXY_KEY']
-if (-not $token) { $token = $env:SENITY_CHAT_PROXY_KEY }
-if (-not $token) {
-    Exit-Error "SENITY_CHAT_PROXY_KEY nicht gesetzt.`nBitte in .env eintragen: SENITY_CHAT_PROXY_KEY=<dein-container-key>"
-}
-Write-OK "SENITY_CHAT_PROXY_KEY: gesetzt (Laenge: $($token.Length))"
-
-if ($token -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
-    Write-OK "Key-Format: UUID (gueltig)"
-} elseif ($token -match '^[0-9a-fA-F]{64}$') {
-    Write-OK "Key-Format: 64-Hex (gueltig)"
-} else {
-    Write-WARN "Key-Format: unbekannt (Laenge=$($token.Length))"
-    Write-INFO "Erwartet: UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) oder 64-Hex"
-}
-
-$baseUrl = $envVars['SENITY_CHAT_PROXY_URL']
-if (-not $baseUrl) { $baseUrl = $env:SENITY_CHAT_PROXY_URL }
-if (-not $baseUrl) { $baseUrl = "https://sdr.senity.ai/api/claude-proxy" }
-Write-OK "Proxy-URL: $baseUrl"
-
-$defaultModel = "claude-sonnet-4-6"
-if (-not $Model) { $Model = $defaultModel }
-Write-OK "Modell: $Model"
-
-# Yolo
-$yolo = [bool]$Yolo
-if ($NoYolo) { $yolo = $false }
-Write-OK "Yolo-Mode: $([bool]$yolo)$(if ($yolo) { '  (Achtung: ungefragte Ausfuehrung!)' })"
-
-# ══════════════════════════════════════════════════════════════
-# [3] Netzwerk pruefen
-# ══════════════════════════════════════════════════════════════
-Write-Sep
-Write-INFO "[3/6] Netzwerk pruefen..."
-if ($baseUrl -and $baseUrl -match '^https?://') {
-    Write-DBG "Pruefe: $baseUrl"
+# ── Desktop-Shortcut erstellen und beenden ──
+if ($CreateShortcut) {
+    Write-INFO "Erstelle Desktop-Verknuepfung..."
     try {
-        $req = [System.Net.HttpWebRequest]::Create($baseUrl)
-        $req.Method = "HEAD"
-        $req.Timeout = 8000
-        $req.UserAgent = "senity-workspace/1.0"
-        try {
-            $resp = $req.GetResponse()
-            $statusCode = [int]$resp.StatusCode
-            $resp.Close()
-            Write-OK "HTTP-Antwort: $statusCode $(([System.Net.HttpStatusCode]$statusCode).ToString())"
-            if ($statusCode -eq 401) {
-                Write-INFO "401 = URL erreichbar, API-Key wird beim Container-Start validiert"
-            } elseif ($statusCode -ge 500) {
-                Write-WARN "Server antwortet mit $statusCode — Proxy moeglicherweise nicht verfuegbar"
-            }
-        } catch [System.Net.WebException] {
-            $webEx = $_.Exception
-            if ($webEx.Response) {
-                $statusCode = [int]$webEx.Response.StatusCode
-                $webEx.Response.Close()
-                Write-OK "HTTP-Antwort: $statusCode (erwartet bei falscher Auth)"
-            } else {
-                $errMsg    = $webEx.Message
-                $errStatus = $webEx.Status
-                if ($errMsg -match "SSL|TLS|certificate|trust") {
-                    Exit-Error "TLS/SSL-Fehler bei $baseUrl`nDetails: $errMsg`nMoeglicherweise falsches Zertifikat oder falscher Hostname."
-                } elseif ($errStatus -eq [System.Net.WebExceptionStatus]::NameResolutionFailure) {
-                    Exit-Error "DNS-Fehler: '$baseUrl' nicht aufloesbar.`nInternetverbindung pruefen oder URL in .env korrigieren."
-                } elseif ($errStatus -eq [System.Net.WebExceptionStatus]::Timeout) {
-                    Write-WARN "Timeout (8s) beim Erreichen von $baseUrl - Netzwerkprobleme moeglich"
-                } elseif ($errStatus -eq [System.Net.WebExceptionStatus]::ConnectFailure) {
-                    Exit-Error "Verbindung abgelehnt: $baseUrl`nServer nicht erreichbar (Port gesperrt oder Service down)."
-                } else {
-                    Write-WARN "Netzwerkfehler ($errStatus): $errMsg"
-                }
-            }
-        }
+        $shell    = New-Object -ComObject WScript.Shell
+        $desktop  = [Environment]::GetFolderPath("Desktop")
+        $linkPath = Join-Path $desktop "Senity Workspace.lnk"
+        $link     = $shell.CreateShortcut($linkPath)
+        $link.TargetPath       = "pwsh.exe"
+        $link.Arguments        = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $ScriptDir 'claude-senity.ps1')`""
+        $link.WorkingDirectory = $ScriptDir
+        $logoPath = Join-Path $ScriptDir "logo.ico"
+        if (Test-Path $logoPath) { $link.IconLocation = $logoPath }
+        $link.Save()
+        Write-OK "Verknuepfung erstellt: $linkPath"
     } catch {
-        Write-WARN "Netzwerktest fehlgeschlagen: $($_.Exception.Message)"
+        Exit-Error "Shortcut konnte nicht erstellt werden: $($_.Exception.Message)"
     }
-} else {
-    Write-INFO "Kein externer Endpunkt — Netzwerktest uebersprungen"
+    exit 0
 }
 
 # ══════════════════════════════════════════════════════════════
-# [4] TTY pruefen
+# [1/5] TTY pruefen (bei Bedarf in Windows Terminal relaunchen)
 # ══════════════════════════════════════════════════════════════
-Write-Sep
-Write-INFO "[4/6] TTY pruefen..."
+Write-INFO "[1/5] TTY pruefen..."
 Write-DBG "IsInputRedirected  : $([System.Console]::IsInputRedirected)"
 Write-DBG "IsOutputRedirected : $([System.Console]::IsOutputRedirected)"
-Write-DBG "IsErrorRedirected  : $([System.Console]::IsErrorRedirected)"
 
 $hasTTY = -not [System.Console]::IsInputRedirected
-
 if (-not $hasTTY) {
-    Write-WARN "Kein TTY verfuegbar. 'docker run -it' benoetigt echtes Terminal."
+    Write-WARN "Kein TTY verfuegbar. Interaktive Eingaben (Key-Abfrage) brauchen Terminal."
     $wt = Get-Command wt -ErrorAction SilentlyContinue
     if ($wt) {
         Write-OK "Windows Terminal (wt.exe) gefunden: $($wt.Source)"
@@ -210,13 +219,12 @@ if (-not $hasTTY) {
         if (-not $scriptPath) { $scriptPath = Join-Path $ScriptDir "claude-senity.ps1" }
 
         $flagParts = @()
-        if ($Yolo)      { $flagParts += "-Yolo" }
-        if ($NoYolo)    { $flagParts += "-NoYolo" }
-        if ($Model -and $Model -ne $defaultModel) { $flagParts += "-Model '$Model'" }
+        if ($Yolo)   { $flagParts += "-Yolo" }
+        if ($NoYolo) { $flagParts += "-NoYolo" }
+        if ($Model)  { $flagParts += "-Model '$Model'" }
         foreach ($r in $Rest) { $flagParts += $r }
         $argStr = $flagParts -join " "
 
-        # Temp-Wrapper-Script: haelt Fenster bei Fehler offen, raeumt sich selbst auf
         $tempScript        = [System.IO.Path]::Combine($env:TEMP, "senity-launch-$PID.ps1")
         $escapedScriptDir  = $ScriptDir.Replace("'", "''")
         $escapedScriptPath = $scriptPath.Replace("'", "''")
@@ -227,7 +235,7 @@ Set-Location '$escapedScriptDir'
 if (`$ec -ne 0 -and `$ec -ne 130) {
     Write-Host ""
     Write-Host "  Container beendet mit Fehler (Exit-Code: `$ec)" -ForegroundColor Red
-    Write-Host "  Bitte Ausgabe oben pruefen." -ForegroundColor Yellow
+    Write-Host "  Bitte Ausgabe oben pruefen." -ForegroundColor Magenta
     Write-Host ""
     Write-Host "  Druecke Enter zum Schliessen..." -ForegroundColor DarkGray
     Read-Host
@@ -242,37 +250,120 @@ Remove-Item -Path `$MyInvocation.MyCommand.Path -ErrorAction SilentlyContinue
         Write-OK "Windows Terminal gestartet."
         exit 0
     } else {
-        Exit-Error "Kein TTY und Windows Terminal (wt.exe) nicht gefunden.`nBitte direkt aus Windows Terminal starten:`n  1. Windows Terminal oeffnen (Win+R: wt)`n  2. In diesen Ordner navigieren: cd '$ScriptDir'`n  3. Script starten: .\claude-senity.ps1"
+        Exit-Error "Kein TTY und Windows Terminal (wt.exe) nicht gefunden.`nBitte direkt aus Windows Terminal starten:`n  1. Windows Terminal oeffnen (Win+R: wt)`n  2. cd '$ScriptDir'`n  3. .\claude-senity.ps1"
     }
 } else {
     Write-OK "TTY verfuegbar"
 }
 
+# ══════════════════════════════════════════════════════════════
+# [2/5] .env laden + Credentials sicherstellen (interaktiv + Validierung)
+# ══════════════════════════════════════════════════════════════
+Write-Sep
+Write-INFO "[2/5] Credentials (Senity Chat Proxy)..."
+
+$envFile  = Join-Path $ScriptDir ".env"
+$envVars  = Read-EnvFile -Path $envFile
+$defaultUrl = "https://sdr.senity.ai/api/claude-proxy"
+
+if (Test-Path $envFile) {
+    Write-OK ".env gefunden: $envFile ($($envVars.Count) Variablen)"
+} else {
+    Write-INFO ".env existiert noch nicht — wird beim ersten gueltigen Key angelegt"
+}
+
+# URL: aus .env, sonst Env-Var, sonst Default
+$baseUrl = $envVars['SENITY_CHAT_PROXY_URL']
+if (-not $baseUrl) { $baseUrl = $env:SENITY_CHAT_PROXY_URL }
+if (-not $baseUrl) { $baseUrl = $defaultUrl }
+
+# Key: aus .env, sonst Env-Var
+$token = $envVars['SENITY_CHAT_PROXY_KEY']
+if (-not $token) { $token = $env:SENITY_CHAT_PROXY_KEY }
+
+$keyOk         = $false
+$attempts      = 0
+$maxAttempts   = 3
+$shouldPersist = $false
+
+while (-not $keyOk) {
+    if (-not $token) {
+        # Erstmalige Eingabe
+        Write-Host ""
+        Write-INFO "SENITY_CHAT_PROXY_KEY ist nicht gesetzt."
+        Write-Host ""
+        $urlInput = Read-Host "  Proxy-URL [$defaultUrl]"
+        if ($urlInput) { $baseUrl = $urlInput.Trim() } else { $baseUrl = $defaultUrl }
+
+        $token = (Read-Host "  Senity Chat Proxy Key").Trim()
+        if (-not $token) {
+            Exit-Error "Kein Key eingegeben. Abbruch."
+        }
+        $shouldPersist = $true
+    }
+
+    Write-INFO "Validiere Key gegen $baseUrl ..."
+    $result = Test-SenityKey -Url $baseUrl -Key $token
+    if ($result.valid) {
+        Write-OK "Key valide ($($result.reason))"
+        $keyOk = $true
+
+        if ($shouldPersist) {
+            try {
+                Set-EnvVar -Path $envFile -Key 'SENITY_CHAT_PROXY_URL' -Value $baseUrl
+                Set-EnvVar -Path $envFile -Key 'SENITY_CHAT_PROXY_KEY' -Value $token
+                Write-OK ".env aktualisiert: $envFile"
+            } catch {
+                Write-WARN ".env konnte nicht geschrieben werden: $($_.Exception.Message)"
+                Write-INFO "Key wird fuer diese Session genutzt, beim naechsten Start aber wieder abgefragt."
+            }
+        }
+        break
+    }
+
+    $attempts++
+    Write-FAIL "Key-Validierung fehlgeschlagen: $($result.reason)"
+    if ($attempts -ge $maxAttempts) {
+        Exit-Error "Nach $maxAttempts Versuchen kein gueltiger Key. Abbruch."
+    }
+    Write-INFO "Versuch $attempts/$maxAttempts fehlgeschlagen. Bitte neuen Key eingeben."
+    $token = $null
+    $shouldPersist = $true
+}
+
+# Modell
+$defaultModel      = "qwen3.6:35b"
+$defaultModelLabel = "Senity Proxy"
+if (-not $Model) { $Model = $defaultModel }
+$modelLabel = if ($Model -eq $defaultModel) { "$defaultModelLabel ($defaultModel)" } else { $Model }
+Write-OK "Modell: $modelLabel"
+
+# Yolo
+$yolo = [bool]$Yolo
+if ($NoYolo) { $yolo = $false }
+Write-OK "Yolo-Mode: $([bool]$yolo)$(if ($yolo) { '  (Achtung: ungefragte Ausfuehrung!)' })"
+
 $safeUser = ($env:USERNAME -replace '[^a-zA-Z0-9_.-]', '_').ToLower()
 
 # ══════════════════════════════════════════════════════════════
-# [5] Docker pruefen
+# [3/5] Docker pruefen
 # ══════════════════════════════════════════════════════════════
 Write-Sep
-Write-INFO "[5/6] Docker pruefen..."
+Write-INFO "[3/5] Docker pruefen..."
 
-# Docker-CLI
 $dockerBin = Get-Command docker -ErrorAction SilentlyContinue
 if (-not $dockerBin) {
     Exit-Error "Docker-CLI nicht im PATH gefunden.`nDocker Desktop installieren: https://docs.docker.com/desktop/install/windows-install/`nOder per winget: winget install Docker.DockerDesktop"
 }
 Write-OK "Docker-CLI: $($dockerBin.Source)"
-
-$dockerVerOutput = docker --version 2>&1
-Write-OK "Docker-Version: $dockerVerOutput"
+Write-OK "Docker-Version: $(docker --version 2>&1)"
 
 # Docker Desktop Exe
 $dockerDesktopExe = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 if (Test-Path $dockerDesktopExe) {
-    Write-OK "Docker Desktop: gefunden ($dockerDesktopExe)"
+    Write-OK "Docker Desktop: gefunden"
 } else {
-    Write-WARN "Docker Desktop nicht unter Standardpfad gefunden"
-    Write-INFO "Pruefe Docker-Daemon direkt (Docker koennte auch via WSL laufen)..."
+    Write-WARN "Docker Desktop nicht unter Standardpfad gefunden — pruefe Daemon direkt"
 }
 
 # Docker Daemon
@@ -283,54 +374,43 @@ $daemonOk = ($LASTEXITCODE -eq 0)
 if (-not $daemonOk) {
     $daemonText = $daemonOutput -join "`n"
     Write-WARN "Docker Daemon nicht erreichbar."
-    Write-DBG "docker info Output: $daemonText"
-
     if ($daemonText -match "permission denied|Access is denied|Zugriff verweigert") {
-        Exit-Error "Docker: Zugriff verweigert.`nLoesung 1: Als Administrator ausfuehren`nLoesung 2: Benutzer '$($env:USERNAME)' zur Gruppe 'docker-users' hinzufuegen`n  (lusrmgr.msc -> docker-users -> Mitglieder -> Hinzufuegen)"
-    } elseif ($daemonText -match "pipe|socket|named pipe") {
-        Write-INFO "Docker Socket nicht erreichbar. Starte Docker Desktop..."
-    } elseif ($daemonText -match "Cannot connect") {
-        Write-INFO "Docker Desktop nicht laufend. Starte..."
+        Exit-Error "Docker: Zugriff verweigert.`nLoesung: Als Administrator ausfuehren oder Benutzer '$($env:USERNAME)' in 'docker-users' aufnehmen."
     }
-
     if (Test-Path $dockerDesktopExe) {
         Write-INFO "Starte Docker Desktop..."
         Start-Process $dockerDesktopExe
-        $timeout = 120
-        $elapsed = 0
-        $ready   = $false
+        $timeout = 120; $elapsed = 0; $ready = $false
         while ($elapsed -lt $timeout) {
-            Start-Sleep -Seconds 3
-            $elapsed += 3
+            Start-Sleep -Seconds 3; $elapsed += 3
             docker info 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) { $ready = $true; break }
             Write-Host "  [WAIT] Warte auf Docker Desktop... ($elapsed/$timeout s)" -ForegroundColor DarkGray
         }
         if (-not $ready) {
-            Exit-Error "Docker Desktop nach $timeout Sekunden nicht bereit.`nBitte Docker Desktop manuell starten und erneut versuchen."
+            Exit-Error "Docker Desktop nach $timeout Sekunden nicht bereit.`nBitte manuell starten und erneut versuchen."
         }
         Write-OK "Docker Desktop bereit"
     } else {
-        Exit-Error "Docker Daemon nicht erreichbar und Docker Desktop nicht gefunden.`nBitte Docker Desktop installieren und starten.`nhttps://docs.docker.com/desktop/install/windows-install/"
+        Exit-Error "Docker Daemon nicht erreichbar und Docker Desktop nicht gefunden.`nhttps://docs.docker.com/desktop/install/windows-install/"
     }
 } else {
     Write-OK "Docker Daemon: bereit"
-    Write-DBG "$(($daemonOutput | Select-String 'Server Version|Operating System|Architecture' | ForEach-Object { $_.Line }) -join ' | ')"
 }
 
-# Image pruefen
+# Image pruefen + ggf. bauen
 Write-INFO "Pruefe Docker Image 'senity-claude:latest'..."
 docker image inspect senity-claude:latest 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Write-WARN "Image 'senity-claude:latest' nicht gefunden."
     $dockerfilePath = Join-Path $ScriptDir "Dockerfile"
     if (-not (Test-Path $dockerfilePath)) {
-        Exit-Error "Dockerfile nicht gefunden: $dockerfilePath`nBitte im richtigen Verzeichnis ausfuehren oder 'setup.ps1' zuerst starten."
+        Exit-Error "Dockerfile nicht gefunden: $dockerfilePath"
     }
     Write-INFO "Starte Image-Build (kann 2-5 Minuten dauern)..."
     docker build -t senity-claude:latest "$ScriptDir"
     if ($LASTEXITCODE -ne 0) {
-        Exit-Error "Image-Build fehlgeschlagen (Exit $LASTEXITCODE).`nBitte manuell pruefen: docker build -t senity-claude:latest '$ScriptDir'"
+        Exit-Error "Image-Build fehlgeschlagen (Exit $LASTEXITCODE)."
     }
     Write-OK "Image gebaut: senity-claude:latest"
 } else {
@@ -359,16 +439,15 @@ if ($zombies -and $LASTEXITCODE -eq 0) {
 }
 
 # ══════════════════════════════════════════════════════════════
-# [6] Container starten
+# [4/5] Mounts vorbereiten (Bindings.md, Workspace, .claude)
 # ══════════════════════════════════════════════════════════════
 Write-Sep
-Write-INFO "[6/6] Container starten..."
+Write-INFO "[4/5] Mounts vorbereiten..."
 
 $containerName = "senity-workspace-$safeUser-$PID"
 $workspacePath = Join-Path $ScriptDir "workspace"
 $claudeDir     = Join-Path $ScriptDir ".claude"
 
-# Verzeichnisse erstellen und pruefen
 foreach ($dir in @($workspacePath, $claudeDir)) {
     if (-not (Test-Path $dir)) {
         try {
@@ -382,14 +461,13 @@ foreach ($dir in @($workspacePath, $claudeDir)) {
     }
 }
 
-$sshDir   = Join-Path $env:USERPROFILE ".ssh"
+$sshDir    = Join-Path $env:USERPROFILE ".ssh"
 $gitconfig = Join-Path $env:USERPROFILE ".gitconfig"
 if (Test-Path $sshDir)    { Write-OK "SSH-Dir: $sshDir (wird eingebunden)" }
 else                      { Write-WARN "SSH-Dir nicht gefunden: $sshDir (kein Mount)" }
 if (Test-Path $gitconfig) { Write-OK ".gitconfig: gefunden (wird eingebunden)" }
 else                      { Write-WARN ".gitconfig nicht gefunden: $gitconfig" }
 
-# Docker-Argumente aufbauen
 $dockerArgs = @(
     "-it", "--rm",
     "--name", $containerName,
@@ -398,60 +476,67 @@ $dockerArgs = @(
     "-w", "/workspace"
 )
 
-# Bindings aus Bindings.md
+# Bindings.md auto-create
 $bindingsFile = Join-Path $ScriptDir "Bindings.md"
-if (Test-Path $bindingsFile) {
-    Write-INFO "Bindings.md wird ausgewertet..."
-    $bindCount     = 0
-    $scriptDirFull = [System.IO.Path]::GetFullPath($ScriptDir)
-    $sep           = [System.IO.Path]::DirectorySeparatorChar
-    $blockedCPaths = @('/workspace', '/workspace/.claude')
-    Get-Content $bindingsFile -Encoding UTF8 | ForEach-Object {
-        $line = $_.Trim()
-        if ($line -eq '' -or $line -match '^#') { return }
-        if ($line -match '^([^\s=]+)=([^\s]+)$') {
-            $hostPart      = $Matches[1]
-            $containerPart = $Matches[2]
+if (-not (Test-Path $bindingsFile)) {
+    $defaultBindings = @"
+# Senity Workspace - Mount-Pfade
+# Format: <host-pfad>=<container-pfad>
+# Kommentare beginnen mit #, leere Zeilen werden ignoriert
+# Container-Pfad muss /workspace/<sub> sein (z.B. /workspace/mein-projekt)
 
-            # Container-Pfad: muss /workspace/<sub> sein — kein Ueberschreiben der Haupt-Mounts
-            if ($containerPart -in $blockedCPaths -or -not $containerPart.StartsWith('/workspace/')) {
-                Write-WARN "Binding '$line' uebersprungen: '$containerPart' nicht erlaubt (muss /workspace/<sub> sein, z.B. /workspace/mein-projekt)"
-                return
-            }
-
-            # Host-Pfad: Path-Traversal verhindern — muss innerhalb Projektverzeichnis liegen
-            try {
-                $canonicalized = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir $hostPart))
-                $inProject     = $canonicalized.StartsWith($scriptDirFull + $sep) -or ($canonicalized -eq $scriptDirFull)
-                if (-not $inProject) {
-                    Write-WARN "Binding '$line' uebersprungen: Host-Pfad liegt ausserhalb des Projektverzeichnisses"
-                    return
-                }
-            } catch {
-                Write-WARN "Binding '$line' uebersprungen: Pfad konnte nicht aufgeloest werden"
-                return
-            }
-
-            if (Test-Path $canonicalized) {
-                $dockerArgs += "-v"
-                $dockerArgs += "$(ConvertTo-DockerPath $canonicalized):${containerPart}"
-                Write-OK "Mount: $canonicalized => $containerPart"
-                $bindCount++
-            } else {
-                Write-WARN "Binding-Pfad nicht gefunden (uebersprungen): $canonicalized"
-            }
-        } else {
-            Write-WARN "Ungueltige Binding-Zeile (Format: hostpfad=/containerpfad): '$line'"
-        }
-    }
-    Write-OK "$bindCount Bindings aktiv"
+./workspace=/workspace
+"@
+    Set-Content -Path $bindingsFile -Value $defaultBindings -Encoding UTF8
+    Write-OK "Bindings.md angelegt (Default: ./workspace=/workspace)"
 }
 
-# SSH + Git — HOME=/workspace, daher in /workspace/.ssh und /workspace/.gitconfig
+Write-INFO "Bindings.md wird ausgewertet..."
+$bindCount     = 0
+$scriptDirFull = [System.IO.Path]::GetFullPath($ScriptDir)
+$sep           = [System.IO.Path]::DirectorySeparatorChar
+$blockedCPaths = @('/workspace', '/workspace/.claude')
+Get-Content $bindingsFile -Encoding UTF8 | ForEach-Object {
+    $line = $_.Trim()
+    if ($line -eq '' -or $line -match '^#') { return }
+    if ($line -match '^([^\s=]+)=([^\s]+)$') {
+        $hostPart      = $Matches[1]
+        $containerPart = $Matches[2]
+
+        if ($containerPart -in $blockedCPaths -or -not $containerPart.StartsWith('/workspace/')) {
+            Write-WARN "Binding '$line' uebersprungen: '$containerPart' nicht erlaubt (muss /workspace/<sub> sein)"
+            return
+        }
+
+        try {
+            $canonicalized = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir $hostPart))
+            $inProject     = $canonicalized.StartsWith($scriptDirFull + $sep) -or ($canonicalized -eq $scriptDirFull)
+            if (-not $inProject) {
+                Write-WARN "Binding '$line' uebersprungen: Host-Pfad ausserhalb des Projektverzeichnisses"
+                return
+            }
+        } catch {
+            Write-WARN "Binding '$line' uebersprungen: Pfad nicht aufloesbar"
+            return
+        }
+
+        if (Test-Path $canonicalized) {
+            $dockerArgs += "-v"
+            $dockerArgs += "$(ConvertTo-DockerPath $canonicalized):${containerPart}"
+            Write-OK "Mount: $canonicalized => $containerPart"
+            $bindCount++
+        } else {
+            Write-WARN "Binding-Pfad nicht gefunden (uebersprungen): $canonicalized"
+        }
+    } else {
+        Write-WARN "Ungueltige Binding-Zeile (Format: hostpfad=/containerpfad): '$line'"
+    }
+}
+Write-OK "$bindCount Bindings aktiv"
+
 if (Test-Path $sshDir)    { $dockerArgs += @("-v", "$(ConvertTo-DockerPath $sshDir):/workspace/.ssh:ro") }
 if (Test-Path $gitconfig) { $dockerArgs += @("-v", "$(ConvertTo-DockerPath $gitconfig):/workspace/.gitconfig:ro") }
 
-# Umgebungsvariablen — Senity Chat Proxy als ANTHROPIC_BASE_URL
 $dockerArgs += @(
     "-e", "ANTHROPIC_BASE_URL=$baseUrl",
     "-e", "ANTHROPIC_API_KEY=$token",
@@ -459,20 +544,24 @@ $dockerArgs += @(
     "-e", "TERM=xterm-256color"
 )
 
-# Claude-Argumente
 $claudeArgs = @()
 if ($Model) { $claudeArgs += @("--model", $Model) }
-if ($yolo) { $claudeArgs += "--dangerously-skip-permissions" }
+if ($yolo)  { $claudeArgs += "--dangerously-skip-permissions" }
 
-# Start-Zusammenfassung
+# ══════════════════════════════════════════════════════════════
+# [5/5] Container starten
+# ══════════════════════════════════════════════════════════════
+Write-Sep
+Write-INFO "[5/5] Container starten..."
+
 Write-Host ""
-Write-Host "  ════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "  ════════════════════════════════════════════" -ForegroundColor Magenta
 Write-Host "  Provider  : Senity Chat Proxy" -ForegroundColor White
 Write-Host "  URL       : $baseUrl" -ForegroundColor White
-Write-Host "  Modell    : $Model" -ForegroundColor White
+Write-Host "  Modell    : $modelLabel" -ForegroundColor White
 Write-Host "  Yolo      : $([bool]$yolo)" -ForegroundColor White
 Write-Host "  Container : $containerName" -ForegroundColor White
-Write-Host "  ════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "  ════════════════════════════════════════════" -ForegroundColor Magenta
 Write-Host ""
 Write-Host "  Starte Claude Code... (Ctrl+C zum Beenden)" -ForegroundColor Green
 Write-Host ""
@@ -484,18 +573,14 @@ Write-Host ""
 if ($containerExit -eq 0 -or $containerExit -eq 130) {
     Write-OK "Claude Code beendet (Exit: $containerExit)"
 } else {
-    Write-Host ""
     Write-FAIL "Container beendet mit Exit-Code: $containerExit"
     switch ($containerExit) {
         125 { Write-INFO "Exit 125: Docker konnte Container nicht starten (Image-Problem?)"; break }
-        126 { Write-INFO "Exit 126: Entrypoint nicht ausfuehrbar (Dockerfile-Problem?)"; break }
-        127 { Write-INFO "Exit 127: Befehl nicht gefunden im Container ('claude' nicht installiert?)"; break }
-        1   { Write-INFO "Exit 1: Allgemeiner Fehler - moeglich: falscher API-Key, falsche URL, Auth-Fehler"; break }
-        default { Write-INFO "Unbekannter Exit-Code. Bitte Container-Logs pruefen: docker logs $containerName" }
+        126 { Write-INFO "Exit 126: Entrypoint nicht ausfuehrbar"; break }
+        127 { Write-INFO "Exit 127: 'claude' nicht gefunden im Container"; break }
+        1   { Write-INFO "Exit 1: Allgemeiner Fehler"; break }
+        default { Write-INFO "Unbekannter Exit-Code. Logs: docker logs $containerName" }
     }
-    Write-Host ""
-    Write-INFO "Debug-Tipp: docker run --rm senity-claude:latest claude --version"
-    Write-INFO "Auth-Tipp : SENITY_CHAT_PROXY_KEY in .env korrekt? (UUID-Format erwartet)"
 }
 Write-Host ""
 exit $containerExit

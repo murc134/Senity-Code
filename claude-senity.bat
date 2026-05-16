@@ -83,7 +83,7 @@ if !ERRORLEVEL! EQU 0 (
         echo   [OK]   %%v
     )
 ) else (
-    echo   [WARN] Docker nicht im PATH (setup.ps1 installiert es ggf. automatisch)
+    echo   [WARN] Docker nicht im PATH (bitte Docker Desktop installieren: winget install Docker.DockerDesktop)
 )
 
 rem ── [3/3] PowerShell-Script starten ────────────────────────

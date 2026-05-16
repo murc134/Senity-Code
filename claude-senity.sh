@@ -23,7 +23,7 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             echo "Usage: ./claude-senity.sh [OPTIONS]"
             echo ""
-            echo "  --model NAME    Modell ueberschreiben (Default: claude-sonnet-4-6)"
+            echo "  --model NAME    Modell ueberschreiben (Default: Senity Proxy)"
             echo "  --yolo          Yolo Mode (default: aus)"
             echo "  --no-yolo       Yolo Mode deaktiviert"
             echo "  -h, --help      Diese Hilfe"
@@ -56,10 +56,16 @@ if [[ -z "$token" ]]; then
     exit 1
 fi
 base_url="${ENV_VARS[SENITY_CHAT_PROXY_URL]:-${SENITY_CHAT_PROXY_URL:-https://sdr.senity.ai/api/claude-proxy}}"
-default_model="claude-sonnet-4-6"
+default_model="qwen3.6:35b"
+default_model_label="Senity Proxy"
 
 if [[ -z "$MODEL" ]]; then
     MODEL="$default_model"
+fi
+if [[ "$MODEL" == "$default_model" ]]; then
+    model_label="${default_model_label} (${default_model})"
+else
+    model_label="$MODEL"
 fi
 
 # ── Docker sicherstellen ──
@@ -93,14 +99,13 @@ ensure_docker() {
     fi
 
     if ! docker image inspect senity-claude:latest &>/dev/null; then
-        echo "Image 'senity-claude:latest' fehlt. Baue Image..."
-        setup_script="${SCRIPT_DIR}/setup.sh"
-        if [[ -f "$setup_script" ]]; then
-            bash "$setup_script"
-        else
-            echo "FEHLER: setup.sh nicht gefunden. Bitte manuell ausfuehren."
+        echo "Image 'senity-claude:latest' fehlt. Baue Image (kann 2-5 Minuten dauern)..."
+        if ! docker build -t senity-claude:latest "$SCRIPT_DIR"; then
+            echo "FEHLER: Image-Build fehlgeschlagen."
+            echo "  Manueller Versuch: docker build -t senity-claude:latest '$SCRIPT_DIR'"
             exit 1
         fi
+        echo "Image gebaut: senity-claude:latest"
     fi
 }
 
@@ -129,8 +134,19 @@ DOCKER_ARGS=(
     -w /workspace
 )
 
-# Bindings aus Bindings.md
+# Bindings aus Bindings.md (Auto-Create bei Erst-Lauf)
 bindings_file="${SCRIPT_DIR}/Bindings.md"
+if [[ ! -f "$bindings_file" ]]; then
+    cat > "$bindings_file" <<'BINDINGS'
+# Senity Workspace - Mount-Pfade
+# Format: <host-pfad>=<container-pfad>
+# Kommentare beginnen mit #, leere Zeilen werden ignoriert
+# Container-Pfad muss /workspace/<sub> sein (z.B. /workspace/mein-projekt)
+
+./workspace=/workspace
+BINDINGS
+    echo "Bindings.md angelegt (Default: ./workspace=/workspace)"
+fi
 if [[ -f "$bindings_file" ]]; then
     while IFS= read -r line || [[ -n "$line" ]]; do
         line="$(echo "$line" | sed 's/#.*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
