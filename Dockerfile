@@ -22,7 +22,8 @@ RUN SENITY_THEME_FILE=/etc/senity-theme.conf node /tmp/patch-claude-header.js \
     && rm /tmp/patch-claude-header.js
 
 COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+COPY senity-mascot-filter.py /usr/local/bin/senity-mascot-filter
+RUN chmod +x /docker-entrypoint.sh /usr/local/bin/senity-mascot-filter
 
 # Benutzer anlegen (node:22-Image bringt node-User bereits mit)
 RUN id -u node >/dev/null 2>&1 || useradd -m -s /bin/bash node
@@ -40,4 +41,4 @@ WORKDIR /workspace
 USER node
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
-CMD ["claude"]
+CMD ["senity-mascot-filter", "claude"]

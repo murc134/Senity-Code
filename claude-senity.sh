@@ -316,7 +316,9 @@ DOCKER_ARGS+=(-e "HOME=/workspace")
 DOCKER_ARGS+=(-e "TERM=xterm-256color")
 
 # Claude-Argumente NACH dem Image-Namen (nicht als Docker-Flags)
-CLAUDE_ARGS=("--model" "$MODEL")
+# senity-mascot-filter ist ein PTY-Wrapper, der das Anthropic-Maskottchen
+# aus der Welcome-Box filtert (Block-Element-Chars in den ersten 2.5 s).
+CLAUDE_ARGS=("senity-mascot-filter" "claude" "--model" "$MODEL")
 if $YOLO; then
     CLAUDE_ARGS+=("--dangerously-skip-permissions")
 fi

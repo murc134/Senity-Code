@@ -69,7 +69,10 @@ const textReplacements = [
     ["What's new",                 'Neuheiten'],       // 10B -> 9B + 1 Space padding
     // Welcome-Box-Titel: "Claude Code" (11B) -> "Senity Wksp" (11B). Voller String
     // "Senity Workspace v1.0" passt nicht in den Binary-Slot ohne Code-Surgery.
-    [',"Claude Code")',            ',"Senity Wksp")'], // 15B -> 15B (exakt)
+    // Mehrere Slots: ,"Claude Code") , title:"Claude Code" , name:"Claude Code"
+    [',"Claude Code")',            ',"Senity Wksp")'],   // 15B -> 15B
+    ['title:"Claude Code"',        'title:"Senity Wksp"'], // 19B -> 19B
+    ['name:"Claude Code"',         'name:"Senity Wksp"'],  // 18B -> 18B
     // Version-Konstante: "2.1.143" (7B) -> "1.0    " (7B mit Trailing-Spaces).
     // dimColor im Welcome-Box rendert Trailing-Spaces unsichtbar.
     ['VERSION:"2.1.143"',          'VERSION:"1.0    "'], // 17B -> 17B
