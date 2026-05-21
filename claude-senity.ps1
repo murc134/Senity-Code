@@ -96,6 +96,57 @@ function Set-EnvVar {
     Set-Content -Path $Path -Value $newLines -Encoding UTF8
 }
 
+# Stellt sicher, dass WSL2 installiert + aktuell ist (Docker-Desktop-Voraussetzung).
+# `wsl --install --no-distribution` aktiviert die Features und installiert den
+# Kernel (benoetigt UAC + ggf. Reboot). `wsl --update` aktualisiert nur den
+# Kernel auf neueren Systemen und braucht oft keinen Reboot.
+function Ensure-WSL {
+    $wslBin = Get-Command wsl -ErrorAction SilentlyContinue
+    if (-not $wslBin) {
+        Write-WARN "WSL nicht im PATH. Installationsversuch via 'wsl --install --no-distribution' (UAC erforderlich)..."
+        try {
+            Start-Process -FilePath "wsl.exe" -ArgumentList "--install","--no-distribution" -Verb RunAs -Wait -ErrorAction Stop
+        } catch {
+            Write-WARN "WSL-Installation fehlgeschlagen oder vom Nutzer abgebrochen. Docker Desktop benoetigt WSL2."
+            return $false
+        }
+        Write-WARN "WSL wurde installiert. Ein Reboot kann erforderlich sein, bevor Docker Desktop laeuft."
+        return $true
+    }
+    # WSL ist da, aber ggf. Kernel veraltet (Marco hatte genau das Problem).
+    Write-INFO "Aktualisiere WSL-Kernel ('wsl --update')..."
+    wsl --update 2>&1 | Out-Null
+    return $true
+}
+
+# Stellt sicher, dass Docker Desktop auf dem Host installiert ist.
+# Wird VOR Phase [3/6] definiert und dort aufgerufen, wenn `docker` fehlt.
+# Hinweis: Docker Desktop benoetigt UAC-Elevation und ggf. einen Reboot
+# (WSL2-Aktivierung). winget kuemmert sich um die UAC-Anforderung.
+function Ensure-DockerDesktop {
+    if (Get-Command docker -ErrorAction SilentlyContinue) { return $true }
+    Write-WARN "Docker-CLI nicht gefunden. Installationsversuch via winget..."
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-WARN "winget nicht verfuegbar. Docker Desktop manuell installieren: https://docs.docker.com/desktop/install/windows-install/"
+        return $false
+    }
+    Write-INFO "Installiere Docker Desktop (UAC-Bestaetigung erforderlich)..."
+    winget install --id Docker.DockerDesktop -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
+    # PATH neu laden + Docker-Standardpfad explizit anhaengen.
+    $env:Path = (@(
+        [System.Environment]::GetEnvironmentVariable('Path','Machine'),
+        [System.Environment]::GetEnvironmentVariable('Path','User'),
+        "$env:ProgramFiles\Docker\Docker\resources\bin"
+    ) | Where-Object { $_ }) -join ';'
+    if (Get-Command docker -ErrorAction SilentlyContinue) {
+        Write-OK "Docker Desktop installiert."
+        Write-WARN "Falls Docker beim ersten Start einen Reboot anfordert, bitte neu starten und Launcher erneut aufrufen."
+        return $true
+    }
+    Write-WARN "Docker weiterhin nicht verfuegbar. Eventuell ist ein Reboot noetig oder die Installation laeuft im Hintergrund."
+    return $false
+}
+
 # ── Senity-Key gegen Proxy validieren ──
 # Rueckgabe: Hashtable @{ valid=$bool; status=<int>; reason=<string> }
 function Test-SenityKey {
@@ -363,7 +414,14 @@ $safeUser = ($env:USERNAME -replace '[^a-zA-Z0-9_.-]', '_').ToLower()
 Write-Sep
 Write-INFO "[3/6] Docker pruefen..."
 
+# WSL2 ist Docker-Desktop-Voraussetzung — immer einmal pruefen/updaten.
+Ensure-WSL | Out-Null
+
 $dockerBin = Get-Command docker -ErrorAction SilentlyContinue
+if (-not $dockerBin) {
+    Ensure-DockerDesktop
+    $dockerBin = Get-Command docker -ErrorAction SilentlyContinue
+}
 if (-not $dockerBin) {
     Exit-Error "Docker-CLI nicht im PATH gefunden.`nDocker Desktop installieren: https://docs.docker.com/desktop/install/windows-install/`nOder per winget: winget install Docker.DockerDesktop"
 }

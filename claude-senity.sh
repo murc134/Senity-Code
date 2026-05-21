@@ -308,6 +308,26 @@ safe_user="$(whoami | tr -cd 'a-zA-Z0-9_.-' | tr '[:upper:]' '[:lower:]')"
 write_sep
 write_info "[3/6] Docker pruefen..."
 
+ensure_docker() {
+    command -v docker &>/dev/null && return 0
+    write_warn "Docker-CLI nicht gefunden. Installationsversuch..."
+    if [[ "$(uname)" == "Darwin" ]]; then
+        if command -v brew &>/dev/null; then
+            brew install --cask docker || true
+            write_info "Docker Desktop installiert. Bitte einmalig manuell starten (Datenschutzdialog), dann Launcher erneut aufrufen."
+        else
+            write_warn "Homebrew nicht verfuegbar. Docker Desktop manuell installieren: https://docs.docker.com/desktop/install/mac-install/"
+        fi
+    else
+        write_warn "Auto-Install auf Linux nicht aktiv (Docker-Engine-Setup ist distrospezifisch und root-pflichtig)."
+        write_warn "Bitte manuell installieren: https://docs.docker.com/engine/install/"
+    fi
+    command -v docker &>/dev/null
+}
+
+if ! command -v docker &>/dev/null; then
+    ensure_docker || true
+fi
 if ! command -v docker &>/dev/null; then
     exit_error "Docker-CLI nicht im PATH gefunden.
   macOS:  brew install --cask docker

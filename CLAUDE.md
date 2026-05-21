@@ -107,5 +107,13 @@ gezeigt. Manuelles Re-Login: einfach `workspace/.codex/` bzw.
   `~/.ssh`-Fallback.
 - **Host-Abhängigkeiten:** Das Repo-Setup läuft auf dem Host und braucht dort
   `git` — der Launcher (`ensure_git` / `Ensure-Git`) installiert es bei Bedarf
-  automatisch (winget / Homebrew·Xcode CLT / apt·dnf·pacman·zypper). `npm`/`npx`
-  braucht nur der Container (im Image), nicht der Host.
+  automatisch (winget / Homebrew·Xcode CLT / apt·dnf·pacman·zypper). Docker
+  Desktop wird analog über `Ensure-DockerDesktop` / `ensure_docker` best effort
+  installiert (winget auf Windows, Homebrew Cask auf macOS). Linux: kein
+  Auto-Install (Engine-Setup ist distrospezifisch und root-pflichtig), Hinweis
+  auf docs.docker.com. Auf Windows läuft vorab `Ensure-WSL`: prüft, ob `wsl`
+  vorhanden ist (sonst `wsl --install --no-distribution` mit UAC) und führt
+  immer `wsl --update` aus, damit der WSL2-Kernel aktuell ist (Docker Desktop
+  startet sonst stillschweigend nicht). Docker Desktop bzw. WSL-Install können
+  beim ersten Start einen Reboot erzwingen. `npm`/`npx` braucht nur der
+  Container (im Image), nicht der Host.
