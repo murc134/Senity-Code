@@ -32,7 +32,7 @@ Einziger Provider: **Senity Chat Proxy**.
 
 1. Docker-CLI + Daemon werden geprueft (Docker Desktop wird ggf. gestartet)
 2. Image `senity-claude:latest` wird gebaut, falls noch nicht vorhanden
-3. `Bindings.md` wird mit Default-Inhalt angelegt, falls fehlend
+3. `.bindings` wird mit Default-Inhalt angelegt, falls fehlend
 4. `workspace/` und `.claude/` werden angelegt
 5. Container startet mit allen Mounts und Senity-Proxy-Credentials
 
@@ -55,15 +55,19 @@ Hinweis: Der Senity Chat Proxy routet alle Modell-Strings intern uebers MSH-Gate
 
 ## Mount-Pfade
 
-`Bindings.md` steuert, welche Ordner in den Container gemountet werden:
+`.bindings` steuert, welche Ordner in den Container gemountet werden:
 
 ```
-# Format: <host-pfad>=<container-pfad>
+# Format: <host-pfad>=<container-pfad>[:ro|:rw]
 ./workspace=/workspace
 ./projects/my-repo=/projects/my-repo
+
+# Excludes (gelten auf alle Mounts, Glob-Pattern im .gitignore-Stil)
+!**/node_modules
+!**/.git
 ```
 
-Standard: `./workspace=/workspace`. Wenn `Bindings.md` fehlt oder leer ist, wird nur `./workspace` eingebunden.
+Standard: `./workspace=/workspace`. Wenn `.bindings` fehlt oder leer ist, wird nur `./workspace` eingebunden. `!`-Zeilen ueberlagern getroffene Unterpfade im Container mit einem leeren Read-Only-Ordner (kein Symlink, kein Admin noetig).
 
 ## Config Mount
 

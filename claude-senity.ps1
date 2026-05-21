@@ -25,6 +25,24 @@ $ScriptDir = $PSScriptRoot
 if (-not $ScriptDir) { $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
 if (-not $ScriptDir) { $ScriptDir = $PWD.Path }
 
+# Kanonische Klon-URL fuer das claude-local Repo (Self-Update + Bootstrap).
+# Wird direkt mit Port :2200 angesprochen, damit kein ~/.ssh/config-Alias
+# auf der User-Maschine vorausgesetzt wird.
+$ClaudeLocalRepoUrl = 'ssh://git@git.senity.ai:2200/senity-admin/senity-claude-code.git'
+
+# Originalargumente fuer einen moeglichen Re-Exec nach Self-Update sichern.
+function Get-OriginalLauncherArgs {
+    $a = @()
+    if ($Yolo)           { $a += '-Yolo' }
+    if ($NoYolo)         { $a += '-NoYolo' }
+    if ($Model)          { $a += '-Model'; $a += $Model }
+    if ($Rebuild)        { $a += '-Rebuild' }
+    if ($CreateShortcut) { $a += '-CreateShortcut' }
+    if ($Help)           { $a += '-Help' }
+    if ($Rest)           { $a += $Rest }
+    return ,$a
+}
+
 # ── Ausgabe-Hilfsfunktionen ──
 function Write-OK   { param([string]$m) Write-Host "  [OK]   $m" -ForegroundColor Green }
 function Write-FAIL { param([string]$m) Write-Host "  [FAIL] $m" -ForegroundColor Red }
@@ -119,6 +137,29 @@ function Ensure-WSL {
     return $true
 }
 
+# Stellt sicher, dass git auf dem Host vorhanden ist (Repo-Setup + Self-Update
+# brauchen es; im Container ist git ohnehin im Image).
+function Ensure-Git {
+    if (Get-Command git -ErrorAction SilentlyContinue) { return $true }
+    Write-WARN "git nicht gefunden — Installationsversuch via winget..."
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        winget install --id Git.Git -e --silent --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
+        # PATH aus der Registry neu laden + Git-Standardpfade explizit anhaengen
+        # (winget kehrt teils zurueck, bevor der Registry-PATH geschrieben ist).
+        $env:Path = (@(
+            [System.Environment]::GetEnvironmentVariable('Path','Machine'),
+            [System.Environment]::GetEnvironmentVariable('Path','User'),
+            "$env:ProgramFiles\Git\cmd",
+            "$env:LOCALAPPDATA\Programs\Git\cmd"
+        ) | Where-Object { $_ }) -join ';'
+    } else {
+        Write-WARN "winget nicht verfuegbar — git manuell installieren: https://git-scm.com/download/win"
+    }
+    if (Get-Command git -ErrorAction SilentlyContinue) { Write-OK "git installiert"; return $true }
+    Write-WARN "git weiterhin nicht verfuegbar — Repo-Setup wird uebersprungen."
+    return $false
+}
+
 # Stellt sicher, dass Docker Desktop auf dem Host installiert ist.
 # Wird VOR Phase [3/6] definiert und dort aufgerufen, wenn `docker` fehlt.
 # Hinweis: Docker Desktop benoetigt UAC-Elevation und ggf. einen Reboot
@@ -200,6 +241,131 @@ function Test-SenityKey {
         }
     } catch {
         return @{ valid = $false; status = 0; reason = "Unerwarteter Fehler: $($_.Exception.Message)" }
+    }
+}
+
+# ── Helper: Deploy-Key on-demand dekodieren ──
+# Wird sowohl vom Self-Update (oben) als auch vom Repo-Setup (Phase [4/6])
+# verwendet. Gibt den Pfad zur dekodierten Key-Datei zurueck oder $null.
+function Get-DeployKeyFile {
+    param([string]$KeyName, [string]$ScriptDir)
+    $sharedEnv = Join-Path $ScriptDir ".env.shared"
+    if (-not (Test-Path $sharedEnv)) { return $null }
+    $keyDir = Join-Path $ScriptDir ".deploy-keys"
+    if (-not (Test-Path $keyDir)) { New-Item -ItemType Directory -Path $keyDir -Force | Out-Null }
+    $kf = Join-Path $keyDir $KeyName
+    if (Test-Path $kf) { return $kf }
+    foreach ($line in (Get-Content $sharedEnv -Encoding UTF8)) {
+        $l = $line.Trim()
+        if ($l -eq '' -or $l -match '^#') { continue }
+        if ($l -match "^$([regex]::Escape($KeyName))_B64=(.+)$") {
+            try {
+                [System.IO.File]::WriteAllBytes($kf, [Convert]::FromBase64String($Matches[1]))
+                icacls $kf /inheritance:r /grant:r "$($env:USERNAME):F" 2>&1 | Out-Null
+                return $kf
+            } catch {
+                if (Test-Path $kf) { Remove-Item $kf -Force -ErrorAction SilentlyContinue }
+                return $null
+            }
+        }
+    }
+    return $null
+}
+
+# ── Self-Update / Bootstrap des Launcher-Repos ──
+# Zieht VOR allem anderen die neueste Version des claude-local-Repos
+# (oder klont es initial, wenn das ScriptDir noch kein Git-Repo ist).
+# Bei HEAD-Aenderung wird die neue Version per Re-Exec gestartet.
+function Invoke-LauncherSelfUpdate {
+    param([string]$ScriptDir, [string]$RepoUrl)
+
+    if ($env:SENITY_SELF_UPDATE_DONE -eq '1') {
+        Write-DBG "Self-Update bereits gelaufen, ueberspringe"
+        return
+    }
+
+    if (-not (Ensure-Git)) {
+        Write-WARN "git fehlt — Launcher-Self-Update uebersprungen."
+        return
+    }
+
+    # Key-Reihenfolge: erst ein spezifischer claude-local-Key (falls je hinzu-
+    # gefuegt), dann der senity-workspace-Key (gleicher Git-Server :2200,
+    # vermutlich auf beiden Repos als Deploy-Key registriert), dann ~/.ssh.
+    $keyCandidates = @()
+    foreach ($k in @('claude-local','senity-workspace')) {
+        $kf = Get-DeployKeyFile -KeyName $k -ScriptDir $ScriptDir
+        if ($kf) { $keyCandidates += $kf }
+    }
+
+    $sshCmds = @()
+    foreach ($kf in $keyCandidates) {
+        $sshCmds += "ssh -i `"$kf`" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+    }
+    $sshCmds += "ssh -o StrictHostKeyChecking=accept-new"
+
+    if (Test-Path (Join-Path $ScriptDir '.git')) {
+        Write-INFO "Pruefe auf neue Launcher-Version (git pull)..."
+        $oldHead = (& git -C $ScriptDir rev-parse HEAD 2>$null)
+        if ($oldHead) { $oldHead = $oldHead.Trim() }
+        $pulled = $false
+        foreach ($cmd in $sshCmds) {
+            $env:GIT_SSH_COMMAND = $cmd
+            & git -C $ScriptDir pull --ff-only --quiet 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { $pulled = $true; break }
+        }
+        $env:GIT_SSH_COMMAND = $null
+        if (-not $pulled) {
+            Write-WARN "Launcher-Self-Update fehlgeschlagen — bestehende Version wird genutzt."
+            return
+        }
+        $newHead = (& git -C $ScriptDir rev-parse HEAD 2>$null)
+        if ($newHead) { $newHead = $newHead.Trim() }
+        if ($newHead -and $oldHead -and $newHead -ne $oldHead) {
+            $shortOld = $oldHead.Substring(0, [Math]::Min(7,$oldHead.Length))
+            $shortNew = $newHead.Substring(0, [Math]::Min(7,$newHead.Length))
+            Write-OK "Launcher aktualisiert ($shortOld -> $shortNew). Re-Start mit neuer Version..."
+            $env:SENITY_SELF_UPDATE_DONE = '1'
+            $exeArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath) + (Get-OriginalLauncherArgs)
+            & pwsh @exeArgs
+            exit $LASTEXITCODE
+        }
+        Write-OK "Launcher ist aktuell"
+        return
+    }
+
+    # ScriptDir ist kein Git-Repo -> Bootstrap.
+    Write-INFO "Launcher-Verzeichnis ist kein Git-Repo — initialer Bootstrap"
+    Write-DBG "Klon-URL: $RepoUrl"
+    Push-Location $ScriptDir
+    try {
+        & git init --quiet 2>&1 | Out-Null
+        & git remote remove origin 2>$null | Out-Null
+        & git remote add origin $RepoUrl 2>&1 | Out-Null
+        $fetched = $false
+        foreach ($cmd in $sshCmds) {
+            $env:GIT_SSH_COMMAND = $cmd
+            & git fetch --quiet origin main 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { $fetched = $true; break }
+        }
+        $env:GIT_SSH_COMMAND = $null
+        if (-not $fetched) {
+            Write-WARN "Bootstrap-Fetch fehlgeschlagen — Launcher laeuft mit dem aktuellen Stand weiter."
+            $dotGit = Join-Path $ScriptDir '.git'
+            if (Test-Path $dotGit) { Remove-Item $dotGit -Recurse -Force -ErrorAction SilentlyContinue }
+            return
+        }
+        & git checkout -fB main origin/main 2>&1 | Out-Null
+        & git reset --hard origin/main 2>&1 | Out-Null
+        $head = (& git rev-parse --short HEAD 2>$null)
+        if ($head) { $head = $head.Trim() }
+        Write-OK "Launcher-Repo initialisiert (HEAD=$head). Re-Start mit verifizierter Version..."
+        $env:SENITY_SELF_UPDATE_DONE = '1'
+        $exeArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath) + (Get-OriginalLauncherArgs)
+        & pwsh @exeArgs
+        exit $LASTEXITCODE
+    } finally {
+        Pop-Location
     }
 }
 
@@ -313,6 +479,16 @@ Remove-Item -Path `$MyInvocation.MyCommand.Path -ErrorAction SilentlyContinue
 } else {
     Write-OK "TTY verfuegbar"
 }
+
+# ══════════════════════════════════════════════════════════════
+# Launcher-Self-Update / Bootstrap (vor allem anderen Setup)
+# Holt die neueste Version des claude-local-Repos. Wenn das ScriptDir
+# noch kein Git-Repo ist (Marco-Fall: Files manuell kopiert), wird es
+# initial geklont. Bei HEAD-Aenderung Re-Exec mit der neuen Version.
+# ══════════════════════════════════════════════════════════════
+Write-Sep
+Write-INFO "Launcher-Update pruefen..."
+Invoke-LauncherSelfUpdate -ScriptDir $ScriptDir -RepoUrl $ClaudeLocalRepoUrl
 
 # ══════════════════════════════════════════════════════════════
 # [2/6] .env laden + Credentials sicherstellen (interaktiv + Validierung)
@@ -524,7 +700,7 @@ if ($zombies -and $LASTEXITCODE -eq 0) {
 Write-Sep
 Write-INFO "[4/6] Repo-Setup (verwaltete Repos)..."
 
-# Fest hinterlegte Repos (Teil des Setups, nicht ueber Bindings.md steuerbar).
+# Fest hinterlegte Repos (Teil des Setups, nicht ueber .bindings steuerbar).
 # Mode: fresh = bei jedem Start loeschen + neu klonen; pull = klonen-oder-pullen.
 # senity-workspace ist das Arbeits-Repo -> 'pull', sonst waere nicht-gepushte
 # Arbeit nach jedem Neustart verloren.
@@ -536,11 +712,11 @@ $ManagedRepos = @(
 )
 $keyDir = Join-Path $ScriptDir ".deploy-keys"
 
-# Marker fuer den auto-verwalteten Block in Bindings.md
+# Marker fuer den auto-verwalteten Block in .bindings
 $ManagedBindBegin = '# >>> SENITY-VERWALTET (auto-generiert vom Repo-Setup) >>>'
 $ManagedBindEnd   = '# <<< SENITY-VERWALTET <<<'
 
-# Repo-Mounts als auto-verwalteten Block in Bindings.md schreiben/aktualisieren.
+# Repo-Mounts als auto-verwalteten Block in .bindings schreiben/aktualisieren.
 # Eigene Eintraege ausserhalb der Marker bleiben unangetastet.
 function Update-ManagedBindings {
     param([string]$Path)
@@ -556,7 +732,7 @@ function Update-ManagedBindings {
     for ($k = 0; $k -lt $kept.Count; $k++) { if ($kept[$k].Trim() -ne '') { $lastNonEmpty = $k } }
     if ($lastNonEmpty -ge 0) { $kept = @($kept[0..$lastNonEmpty]) } else { $kept = @() }
     $block = @($ManagedBindBegin,
-        '# Auto-generiert vom Repo-Setup — Aenderungen hier werden bei jedem',
+        '# Auto-generiert vom Repo-Setup, Aenderungen hier werden bei jedem',
         '# Start ueberschrieben. senity-workspace liegt direkt in workspace/',
         '# und ist dadurch bereits unter /workspace/... sichtbar.')
     foreach ($sub in @('skills','commands','agents')) {
@@ -572,28 +748,7 @@ function Update-ManagedBindings {
     Set-Content -Path $Path -Value ($kept + @('') + $block) -Encoding UTF8
 }
 
-# Stellt sicher, dass git auf dem Host vorhanden ist (Repo-Setup braucht es;
-# im Container ist git ohnehin im Image).
-function Ensure-Git {
-    if (Get-Command git -ErrorAction SilentlyContinue) { return $true }
-    Write-WARN "git nicht gefunden — Installationsversuch via winget..."
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id Git.Git -e --silent --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
-        # PATH aus der Registry neu laden + Git-Standardpfade explizit anhaengen
-        # (winget kehrt teils zurueck, bevor der Registry-PATH geschrieben ist).
-        $env:Path = (@(
-            [System.Environment]::GetEnvironmentVariable('Path','Machine'),
-            [System.Environment]::GetEnvironmentVariable('Path','User'),
-            "$env:ProgramFiles\Git\cmd",
-            "$env:LOCALAPPDATA\Programs\Git\cmd"
-        ) | Where-Object { $_ }) -join ';'
-    } else {
-        Write-WARN "winget nicht verfuegbar — git manuell installieren: https://git-scm.com/download/win"
-    }
-    if (Get-Command git -ErrorAction SilentlyContinue) { Write-OK "git installiert"; return $true }
-    Write-WARN "git weiterhin nicht verfuegbar — Repo-Setup wird uebersprungen."
-    return $false
-}
+# Ensure-Git ist oben im File definiert (wird vom Self-Update bereits gebraucht).
 
 $null = Ensure-Git
 $gitBin = Get-Command git -ErrorAction SilentlyContinue
@@ -680,7 +835,7 @@ if (-not $gitBin) {
     }
 
     # 3) private/-Verzeichnisse anlegen — Mount-Quelle fuer selbst angelegte
-    #    Skills/Commands/Agents. Die Mounts kommen aus Bindings.md.
+    #    Skills/Commands/Agents. Die Mounts kommen aus .bindings.
     foreach ($sub in @('skills','commands','agents')) {
         $p = Join-Path $ScriptDir "workspace\.claude\$sub\private"
         if (-not (Test-Path $p)) { New-Item -ItemType Directory -Path $p -Force | Out-Null }
@@ -689,7 +844,7 @@ if (-not $gitBin) {
 Write-OK "Repo-Setup abgeschlossen"
 
 # ══════════════════════════════════════════════════════════════
-# [5/6] Mounts vorbereiten (Bindings.md, Workspace, .claude)
+# [5/6] Mounts vorbereiten (.bindings, Workspace, .claude)
 # ══════════════════════════════════════════════════════════════
 Write-Sep
 Write-INFO "[5/6] Mounts vorbereiten..."
@@ -727,20 +882,29 @@ $dockerArgs = @(
 )
 
 # Bindings.md auto-create
-$bindingsFile = Join-Path $ScriptDir "Bindings.md"
+$bindingsFile = Join-Path $ScriptDir ".bindings"
 if (-not (Test-Path $bindingsFile)) {
     $defaultBindings = @"
-# Senity Workspace — Mount-Pfade
+# Senity Workspace, Mount-Pfade
 # Format: <host-pfad>=<container-pfad>[:ro|:rw]
+# Excludes: '!<glob>' (gilt auf alle Mounts; Pattern im .gitignore-Stil)
 # Kommentare beginnen mit #, leere Zeilen werden ignoriert
 #
-# Host-Pfad:      beliebiges Verzeichnis — absolut (C:\Users\...), per ~ (~/projekte/foo)
-#                 oder relativ zum Projektverzeichnis (../mein-projekt).
-#                 Leerzeichen erlaubt; umschliessende '/" werden abgestreift.
+# Host-Pfad:      beliebiges Verzeichnis oder Datei, absolut (C:\Users\...),
+#                 per ~ (~/projekte/foo) oder relativ zum Projektverzeichnis
+#                 (../mein-projekt). Leerzeichen erlaubt; umschliessende '/"
+#                 werden abgestreift.
 # Container-Pfad: muss unterhalb von /workspace/ liegen (z.B. /workspace/mein-repo).
 #                 /workspace selbst und /workspace/.claude sind reserviert.
 # Modus:          optionales :ro (nur lesen) oder :rw (lesen+schreiben) am
 #                 Container-Pfad. Ohne Angabe: rw.
+# Excludes:       Zeilen beginnend mit '!' definieren Glob-Pattern, die in
+#                 ALLEN Mounts ueberlagert werden. Der Launcher mountet die
+#                 Treffer mit einem leeren Read-Only-Ordner, sodass sie im
+#                 Container nicht sichtbar sind. Beispiele:
+#                   !**/node_modules
+#                   !**/.git
+#                   !**/.env*
 
 # Beispiele:
 # ~/projekte/mein-repo=/workspace/mein-repo
@@ -749,22 +913,97 @@ if (-not (Test-Path $bindingsFile)) {
 # ~/docs/referenz=/workspace/referenz:ro
 "@
     Set-Content -Path $bindingsFile -Value $defaultBindings -Encoding UTF8
-    Write-OK "Bindings.md angelegt (workspace/ ist bereits eingebunden — eigene Pfade ergaenzen)"
+    Write-OK ".bindings angelegt (workspace/ ist bereits eingebunden, eigene Pfade ergaenzen)"
 }
 
-# Repo-Mounts als auto-verwalteten Block in Bindings.md schreiben/aktualisieren
+# Repo-Mounts als auto-verwalteten Block in .bindings schreiben/aktualisieren
 Update-ManagedBindings -Path $bindingsFile
 
-Write-INFO "Bindings.md wird ausgewertet..."
-$bindCount      = 0
-# Reservierte Container-Mountziele: kollidieren mit den eingebauten Mounts
-$reservedCPaths = @('/workspace', '/workspace/.claude')
+# Pre-Scan: '!<glob>'-Excludes einsammeln (gelten global fuer alle Mounts).
+$excludePatterns = @()
+$inFencePre = $false
 Get-Content $bindingsFile -Encoding UTF8 | ForEach-Object {
     $line = $_.Trim()
+    if ($line -match '^```') { $inFencePre = -not $inFencePre; return }
+    if ($inFencePre) { return }
     if ($line -eq '' -or $line -match '^#') { return }
+    if ($line -match '^!(.+)$') {
+        $pat = $Matches[1].Trim()
+        if ($pat) { $excludePatterns += $pat }
+    }
+}
+$excludePatterns = @($excludePatterns | Sort-Object -Unique)
+
+# Empty-Stage (leerer Ordner + leere Datei) als Overlay-Quelle fuer Excludes.
+$mountStageDir = Join-Path $ScriptDir '.mount-stage'
+$emptyDir      = Join-Path $mountStageDir 'empty'
+$emptyFile     = Join-Path $mountStageDir 'empty.file'
+if ($excludePatterns.Count -gt 0) {
+    if (-not (Test-Path $emptyDir))  { New-Item -ItemType Directory -Path $emptyDir  -Force | Out-Null }
+    if (-not (Test-Path $emptyFile)) { New-Item -ItemType File      -Path $emptyFile -Force | Out-Null }
+    Write-INFO "Excludes aktiv: $($excludePatterns -join ', ')"
+}
+
+function Get-BindingOverlayArgs {
+    param(
+        [string]   $Source,
+        [string]   $ContainerBase,
+        [string[]] $Patterns,
+        [string]   $EmptyDir,
+        [string]   $EmptyFile
+    )
+    $out = @()
+    if (-not $Patterns -or $Patterns.Count -eq 0) { return ,$out }
+    if (-not (Test-Path $Source -PathType Container)) { return ,$out }
+    $base = [System.IO.Path]::GetFullPath($Source)
+    $seen = @{}
+    foreach ($pat in $Patterns) {
+        $name = $pat
+        $recursive = $false
+        if ($pat -match '^\*\*/(.+)$') { $name = $Matches[1]; $recursive = $true }
+        # nur reine Basename-Pattern, kein '/' im Restmuster
+        if ($name -match '[\\/]') {
+            Write-WARN "Exclude '$pat' uebersprungen (nur Basename-Pattern unterstuetzt)"
+            continue
+        }
+        $gci = @{ Path = $base; Filter = $name; Force = $true; ErrorAction = 'SilentlyContinue' }
+        if ($recursive) { $gci['Recurse'] = $true }
+        Get-ChildItem @gci | ForEach-Object {
+            $full = $_.FullName
+            if (-not $full.StartsWith($base, [System.StringComparison]::OrdinalIgnoreCase)) { return }
+            $rel = $full.Substring($base.Length).TrimStart('\','/').Replace('\','/')
+            if (-not $rel) { return }
+            if ($seen.ContainsKey($rel)) { return }
+            $seen[$rel] = $true
+            $stageSrc = if ($_.PSIsContainer) { $EmptyDir } else { $EmptyFile }
+            $out += '-v'
+            $out += "$(ConvertTo-DockerPath $stageSrc):${ContainerBase}/${rel}:ro"
+        }
+    }
+    return ,$out
+}
+
+Write-INFO ".bindings wird ausgewertet..."
+$bindCount      = 0
+$overlayCount   = 0
+# Reservierte Container-Mountziele: kollidieren mit den eingebauten Mounts
+$reservedCPaths = @('/workspace', '/workspace/.claude')
+$inFence = $false
+Get-Content $bindingsFile -Encoding UTF8 | ForEach-Object {
+    $line = $_.Trim()
+    # Markdown-Strukturen ignorieren: Leerzeilen, '#'-Kommentare/-Headings,
+    # Fenced-Codeblocks (```), Listen, Tabellen, HTML-Kommentare und alles
+    # ohne '=' (reine Prosa). So darf .bindings eine echte .md-Datei sein.
+    if ($line -match '^```') { $inFence = -not $inFence; return }
+    if ($inFence) { return }
+    if ($line -eq '' -or $line -match '^#') { return }
+    # '!'-Excludes wurden im Pre-Scan eingesammelt, hier nicht nochmal verarbeiten.
+    if ($line -match '^!') { return }
+    if ($line -notmatch '=/') { return }
+    if ($line -match '^(<!--|-->|>|\||\*|-)\s' -or $line -match '^(\*\*|__)') { return }
     # Host-Teil greedy bis zum letzten '=', Container-Teil ohne Space/'='.
     # Erlaubt Host-Pfade mit Leerzeichen (z.B. 'C:\Users\x\Claude Workspace').
-    if ($line -match '^(.+)=([^\s=]+)$') {
+    if ($line -match '^(.+)=(/[^\s=]+)$') {
         $hostPart      = $Matches[1].Trim().Trim('"').Trim("'")
         $containerPart = $Matches[2]
 
@@ -804,6 +1043,13 @@ Get-Content $bindingsFile -Encoding UTF8 | ForEach-Object {
             $dockerArgs += "$(ConvertTo-DockerPath $canonicalized):${containerPart}:${mountMode}"
             Write-OK "Mount: $canonicalized => $containerPart ($mountMode)"
             $bindCount++
+            $overlayArgs = Get-BindingOverlayArgs -Source $canonicalized -ContainerBase $containerPart -Patterns $excludePatterns -EmptyDir $emptyDir -EmptyFile $emptyFile
+            if ($overlayArgs.Count -gt 0) {
+                $dockerArgs += $overlayArgs
+                $cnt = [int]($overlayArgs.Count / 2)
+                $overlayCount += $cnt
+                Write-INFO "  $cnt Exclude-Overlay(s) angehaengt"
+            }
         } else {
             Write-WARN "Binding-Pfad nicht gefunden (uebersprungen): $canonicalized"
         }
@@ -811,7 +1057,11 @@ Get-Content $bindingsFile -Encoding UTF8 | ForEach-Object {
         Write-WARN "Ungueltige Binding-Zeile (Format: hostpfad=/containerpfad): '$line'"
     }
 }
-Write-OK "$bindCount Bindings aktiv"
+if ($overlayCount -gt 0) {
+    Write-OK "$bindCount Bindings aktiv, $overlayCount Exclude-Overlay(s)"
+} else {
+    Write-OK "$bindCount Bindings aktiv"
+}
 
 if (Test-Path $sshDir)    { $dockerArgs += @("-v", "$(ConvertTo-DockerPath $sshDir):/workspace/.ssh:ro") }
 if (Test-Path $gitconfig) { $dockerArgs += @("-v", "$(ConvertTo-DockerPath $gitconfig):/workspace/.gitconfig:ro") }

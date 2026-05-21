@@ -1,0 +1,90 @@
+# Senity Workspace, Mount-Pfade
+
+Diese Datei steuert, welche Host-Verzeichnisse im Senity-Code-Container unter
+`/workspace/...` auftauchen. Der Launcher (`claude-senity.ps1`, `.sh`, `.bat`)
+liest sie bei jedem Start ein und baut daraus die `docker run -v`-Flags.
+
+Inhalt ist gleichzeitig gültige Markdown- und gültige Mount-Config. Der Parser
+ignoriert alles, was nicht nach `host=container[:mode]` oder `!<glob>` aussieht
+(Überschriften, Listen, Codeblöcke, Tabellen, Fließtext) und liest nur Mount-
+und Exclude-Zeilen.
+
+## Format
+
+```
+<host-pfad>=<container-pfad>[:ro|:rw]
+!<glob-pattern>
+```
+
+### Host-Pfad
+
+Beliebiges Verzeichnis auf dem Host. Erlaubt sind:
+
+- absolute Windows-Pfade: `C:\Users\dein-name\code\api`, `D:\Devel\NodeJS\meinservice`
+- absolute Unix-Pfade (macOS, Linux): `/Users/dein-name/code/api`, `/home/dein-name/code/api`
+- Home-Notation: `~/projekte/mein-repo` (wird zu `$HOME` bzw. `%USERPROFILE%`)
+- relativ zum Projektverzeichnis: `../nachbar-projekt`, `workspace/.claude/skills/private`
+
+Vorwärts- und Rückwärts-Slashes sind beide erlaubt, Pfade werden intern
+kanonisiert. Leerzeichen sind ok, umschließende `'` oder `"` werden abgestreift.
+
+### Container-Pfad
+
+Muss unterhalb von `/workspace/` liegen und immer mit Vorwärts-Slash:
+
+- erlaubt: `/workspace/mein-repo`, `/workspace/api`, `/workspace/.claude/skills/global`
+- reserviert: `/workspace` und `/workspace/.claude` (eingebaute Mounts)
+
+### Modus
+
+Optionales Suffix am Container-Pfad:
+
+- `:ro` (read-only), `:rw` (read-write)
+- ohne Angabe: `rw`
+
+### Excludes (`!`-Pattern)
+
+Zeilen, die mit `!` beginnen, definieren Glob-Pattern im `.gitignore`-Stil.
+Sie gelten **global** für alle Mounts. Der Launcher scannt jeden Mount-Source
+nach Treffern und überlagert pro Treffer den Sub-Pfad im Container mit einem
+leeren Read-Only-Ordner (kein Symlink, kein Admin nötig). So verschwinden z.B.
+`node_modules` oder `.git` aus dem Container, ohne dass der Host-Mount
+verändert wird.
+
+Beispiele:
+
+- `!**/node_modules` schließt jeden `node_modules`-Ordner an beliebiger Tiefe aus
+- `!**/.git` schließt Git-Metadaten aus
+- `!**/.env*` schließt alle `.env`-Dateien aus
+
+## Beispiele
+
+```
+~/projekte/mein-repo=/workspace/mein-repo
+C:\Users\ich\code\api=/workspace/api
+D:\Devel\NodeJS\meinservice=/workspace/meinservice:ro
+../nachbar-projekt=/workspace/nachbar
+
+!**/node_modules
+!**/.git
+!**/.env
+!**/.env.*
+```
+
+## Auto-verwaltete Mounts
+
+Der Block zwischen den `SENITY-VERWALTET`-Markern wird bei jedem Launcher-Start
+neu geschrieben. Dort von Hand editieren bringt nichts, die Änderung
+überschreibt der nächste Start. Eigene Einträge gehören außerhalb der Marker.
+
+# >>> SENITY-VERWALTET (auto-generiert vom Repo-Setup) >>>
+workspace/.claude/skills/intern=/workspace/.claude/skills/intern:ro
+workspace/.claude/skills/private=/workspace/.claude/skills/private:rw
+~/.claude/skills=/workspace/.claude/skills/global:rw
+workspace/.claude/commands/intern=/workspace/.claude/commands/intern:ro
+workspace/.claude/commands/private=/workspace/.claude/commands/private:rw
+~/.claude/commands=/workspace/.claude/commands/global:rw
+workspace/.claude/agents/intern=/workspace/.claude/agents/intern:ro
+workspace/.claude/agents/private=/workspace/.claude/agents/private:rw
+~/.claude/agents=/workspace/.claude/agents/global:rw
+# <<< SENITY-VERWALTET <<<

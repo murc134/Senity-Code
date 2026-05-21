@@ -12,7 +12,7 @@ das Repo-Setup, das vor jedem Container-Start läuft.
 | `claude-senity.sh` / `.ps1` / `.bat` | Host-Launcher (Linux·macOS / Windows / Windows-Bootstrap) |
 | `.env.shared` | Committet: base64-kodierte **Deploy-Keys** (Klartext) fürs Repo-Setup |
 | `SYSTEM_PROMPT.md` | Wird bei jedem Start gelesen und Claude Code via `--append-system-prompt` mitgegeben |
-| `Bindings.md` | Host→Container-Mounts; enthält den auto-verwalteten Repo-Mount-Block |
+| `.bindings` | Host→Container-Mounts; enthält den auto-verwalteten Repo-Mount-Block und globale Exclude-Patterns |
 
 Die `.sh`/`.ps1`/`.bat` müssen funktional **gleichwertig** bleiben. Die `.bat`
 ist ein reiner pwsh-Bootstrap — sie ruft `claude-senity.ps1 %*` auf und enthält
@@ -60,14 +60,25 @@ sein soll — global → `…/global/`, privat → `…/private/`. Sagt der Nutz
 ist die Vorgabe **privat**. Diese Regel steht auch in `SYSTEM_PROMPT.md`, damit
 der Claude-Code im Container sie befolgt.
 
-## Mounts in `Bindings.md`
+## Mounts in `.bindings`
 
 Der Launcher (`update_managed_bindings` / `Update-ManagedBindings`) schreibt die
 neun `.claude`-Mounts bei jedem Start in einen Block zwischen
 `# >>> SENITY-VERWALTET … >>>` und `# <<< SENITY-VERWALTET <<<`. Der Block wird
-jedes Mal neu erzeugt — **nichts darin von Hand editieren**. Eigene Einträge
+jedes Mal neu erzeugt, **nichts darin von Hand editieren**. Eigene Einträge
 außerhalb der Marker bleiben unangetastet. `senity-workspace` braucht keinen
 Eintrag (liegt in `workspace/`, via `/workspace`-Mount schon sichtbar).
+
+### Excludes (`!`-Pattern)
+
+Zeilen in `.bindings`, die mit `!` beginnen, sind Glob-Pattern im
+`.gitignore`-Stil. Sie gelten **global** für alle Mounts. Der Launcher scannt
+jeden Mount-Source nach Treffern und mountet pro Treffer einen leeren
+Read-Only-Ordner (`.mount-stage/empty/`) über den exkludierten Pfad. Dadurch
+verschwinden z.B. `node_modules` oder `.git`-Ordner im Container, ohne dass der
+Host-Mount verändert wird, ohne Symlinks und ohne Admin-Rechte. Re-Scan bei
+jedem Launcher-Start, sodass neu entstandene `node_modules` automatisch
+erfasst werden.
 
 ## SYSTEM_PROMPT.md
 

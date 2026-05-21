@@ -9,7 +9,15 @@
 # ══════════════════════════════════════════════════════════════
 set -uo pipefail
 
+# Originalargumente sichern, bevor sie weiter unten zerlegt werden — fuer
+# einen moeglichen Re-Exec nach Launcher-Self-Update.
+ORIGINAL_ARGS=("$@")
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Kanonische Klon-URL des Launcher-Repos (Self-Update + Bootstrap).
+# Port :2200 wird direkt angesprochen — kein ~/.ssh/config-Alias noetig.
+CLAUDE_LOCAL_REPO_URL='ssh://git@git.senity.ai:2200/senity-admin/senity-claude-code.git'
 
 # ── Ausgabe-Hilfsfunktionen (ANSI-Farben) ──
 c_green="\033[0;32m"
@@ -133,6 +141,143 @@ validate_senity_key() {
     esac
 }
 
+# ── Sicherstellen, dass git auf dem Host vorhanden ist ──
+# Das Repo-Setup + Launcher-Self-Update laufen auf dem HOST (vor dem
+# Container-Start) und brauchen git. Im Container ist git ohnehin im Image.
+ensure_git() {
+    command -v git &>/dev/null && return 0
+    write_warn "git nicht gefunden — Installationsversuch..."
+    if [[ "$(uname)" == "Darwin" ]]; then
+        if command -v brew &>/dev/null; then
+            brew install git || true
+        else
+            write_info "Starte Xcode Command Line Tools (enthalten git)..."
+            xcode-select --install 2>/dev/null || true
+            write_warn "GUI-Installation abschliessen, dann Launcher neu starten."
+        fi
+    elif command -v apt-get &>/dev/null; then
+        sudo apt-get update -qq || true; sudo apt-get install -y git || true
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y git || true
+    elif command -v pacman &>/dev/null; then
+        sudo pacman -S --noconfirm git || true
+    elif command -v zypper &>/dev/null; then
+        sudo zypper install -y git || true
+    else
+        write_warn "Kein bekannter Paketmanager — git bitte manuell installieren."
+    fi
+    if command -v git &>/dev/null; then
+        write_ok "git installiert: $(command -v git)"
+        return 0
+    fi
+    write_warn "git weiterhin nicht verfuegbar — Repo-Setup wird uebersprungen."
+    return 1
+}
+
+# ── Einen Deploy-Key on-demand aus .env.shared dekodieren ──
+# Echoes Pfad zur dekodierten Datei oder leer bei Fehlschlag.
+get_deploy_key_file() {
+    local key_name="$1"
+    local shared="${SCRIPT_DIR}/.env.shared"
+    local key_dir="${SCRIPT_DIR}/.deploy-keys"
+    local kf="${key_dir}/${key_name}"
+    [[ -f "$shared" ]] || return 1
+    if [[ -s "$kf" ]]; then echo "$kf"; return 0; fi
+    local b64_decode=""
+    if command -v openssl &>/dev/null; then b64_decode="openssl base64 -d -A"
+    elif command -v base64 &>/dev/null; then b64_decode="base64 --decode"
+    else return 1; fi
+    mkdir -p "$key_dir"; chmod 700 "$key_dir" 2>/dev/null || true
+    local line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        if [[ "$line" =~ ^${key_name}_B64=(.+)$ ]]; then
+            if printf '%s' "${BASH_REMATCH[1]}" | $b64_decode > "$kf" 2>/dev/null && [[ -s "$kf" ]]; then
+                chmod 600 "$kf" 2>/dev/null || true
+                echo "$kf"; return 0
+            fi
+            rm -f "$kf"
+            return 1
+        fi
+    done < "$shared"
+    return 1
+}
+
+# ── Self-Update / Bootstrap des Launcher-Repos ──
+# Vor allem anderen: claude-local pullen. ScriptDir ist kein Git-Repo?
+# -> initial klonen via Deploy-Key (claude-local → senity-workspace → ~/.ssh).
+# Bei HEAD-Aenderung Re-Exec mit der neuen Version.
+launcher_self_update() {
+    if [[ "${SENITY_SELF_UPDATE_DONE:-}" == "1" ]]; then
+        write_dbg "Self-Update bereits gelaufen, ueberspringe"
+        return 0
+    fi
+
+    if ! ensure_git; then
+        write_warn "git fehlt — Launcher-Self-Update uebersprungen."
+        return 0
+    fi
+
+    local -a ssh_cmds=()
+    local k kf
+    for k in claude-local senity-workspace; do
+        kf="$(get_deploy_key_file "$k" 2>/dev/null || true)"
+        if [[ -n "$kf" && -f "$kf" ]]; then
+            ssh_cmds+=("ssh -i \"${kf}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new")
+        fi
+    done
+    ssh_cmds+=("ssh -o StrictHostKeyChecking=accept-new")
+
+    if [[ -d "${SCRIPT_DIR}/.git" ]]; then
+        write_info "Pruefe auf neue Launcher-Version (git pull)..."
+        local old_head new_head pulled=false cmd
+        old_head="$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || true)"
+        for cmd in "${ssh_cmds[@]}"; do
+            if GIT_SSH_COMMAND="$cmd" git -C "$SCRIPT_DIR" pull --ff-only --quiet 2>/dev/null; then
+                pulled=true; break
+            fi
+        done
+        if [[ "$pulled" != true ]]; then
+            write_warn "Launcher-Self-Update fehlgeschlagen — bestehende Version wird genutzt."
+            return 0
+        fi
+        new_head="$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || true)"
+        if [[ -n "$new_head" && -n "$old_head" && "$new_head" != "$old_head" ]]; then
+            write_ok "Launcher aktualisiert (${old_head:0:7} -> ${new_head:0:7}). Re-Start mit neuer Version..."
+            export SENITY_SELF_UPDATE_DONE=1
+            exec "$0" "${ORIGINAL_ARGS[@]}"
+        fi
+        write_ok "Launcher ist aktuell"
+        return 0
+    fi
+
+    # Bootstrap: ScriptDir ist kein Git-Repo.
+    write_info "Launcher-Verzeichnis ist kein Git-Repo — initialer Bootstrap"
+    write_dbg "Klon-URL: $CLAUDE_LOCAL_REPO_URL"
+    local fetched=false cmd
+    ( cd "$SCRIPT_DIR" && git init --quiet ) 2>/dev/null || true
+    ( cd "$SCRIPT_DIR" && git remote remove origin 2>/dev/null || true )
+    ( cd "$SCRIPT_DIR" && git remote add origin "$CLAUDE_LOCAL_REPO_URL" ) 2>/dev/null || true
+    for cmd in "${ssh_cmds[@]}"; do
+        if ( cd "$SCRIPT_DIR" && GIT_SSH_COMMAND="$cmd" git fetch --quiet origin main ) 2>/dev/null; then
+            fetched=true; break
+        fi
+    done
+    if [[ "$fetched" != true ]]; then
+        write_warn "Bootstrap-Fetch fehlgeschlagen — Launcher laeuft mit aktuellem Stand weiter."
+        rm -rf "${SCRIPT_DIR}/.git" 2>/dev/null || true
+        return 0
+    fi
+    ( cd "$SCRIPT_DIR" && git checkout -fB main origin/main ) 2>/dev/null || true
+    ( cd "$SCRIPT_DIR" && git reset --hard origin/main ) 2>/dev/null || true
+    local head
+    head="$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+    write_ok "Launcher-Repo initialisiert (HEAD=${head}). Re-Start mit verifizierter Version..."
+    export SENITY_SELF_UPDATE_DONE=1
+    exec "$0" "${ORIGINAL_ARGS[@]}"
+}
+
 # ── Argumente parsen ──
 MODEL=""
 YOLO=true
@@ -194,6 +339,16 @@ if [[ ! -t 0 ]]; then
 else
     write_ok "TTY verfuegbar"
 fi
+
+# ══════════════════════════════════════════════════════════════
+# Launcher-Self-Update / Bootstrap (vor allem anderen Setup)
+# Holt die neueste Version des claude-local-Repos. Wenn das ScriptDir
+# noch kein Git-Repo ist (Files manuell kopiert), wird es initial geklont.
+# Bei HEAD-Aenderung Re-Exec mit der neuen Version.
+# ══════════════════════════════════════════════════════════════
+write_sep
+write_info "Launcher-Update pruefen..."
+launcher_self_update
 
 # ══════════════════════════════════════════════════════════════
 # [2/6] .env laden + Credentials sicherstellen
@@ -417,7 +572,7 @@ fi
 
 # ══════════════════════════════════════════════════════════════
 # Verwaltete Repos — werden vor dem Container-Start geklont/gepullt.
-# Fest hinterlegt (Teil des Setups, nicht ueber Bindings.md steuerbar).
+# Fest hinterlegt (Teil des Setups, nicht ueber .bindings steuerbar).
 # MODE: fresh = bei jedem Start loeschen + neu klonen; pull = klonen-
 # oder-pullen. senity-workspace ist das Arbeits-Repo -> pull, sonst
 # waere nicht-gepushte Arbeit nach jedem Neustart verloren.
@@ -437,7 +592,7 @@ MANAGED_REPO_DIRS=(
 )
 MANAGED_REPO_MODES=( "pull" "fresh" "fresh" "fresh" )
 
-# Marker fuer den auto-verwalteten Block in Bindings.md
+# Marker fuer den auto-verwalteten Block in .bindings
 MANAGED_BIND_BEGIN="# >>> SENITY-VERWALTET (auto-generiert vom Repo-Setup) >>>"
 MANAGED_BIND_END="# <<< SENITY-VERWALTET <<<"
 
@@ -451,38 +606,7 @@ clone_managed_repo() {
     git clone --quiet --branch main "$url" "$dir" 2>/dev/null
 }
 
-# ── Sicherstellen, dass git auf dem Host vorhanden ist ──
-# Das Repo-Setup laeuft auf dem HOST (vor dem Container-Start) und braucht git.
-# (Im Container ist git ohnehin im Image — das hier betrifft nur den Host.)
-ensure_git() {
-    command -v git &>/dev/null && return 0
-    write_warn "git nicht gefunden — Installationsversuch..."
-    if [[ "$(uname)" == "Darwin" ]]; then
-        if command -v brew &>/dev/null; then
-            brew install git || true
-        else
-            write_info "Starte Xcode Command Line Tools (enthalten git)..."
-            xcode-select --install 2>/dev/null || true
-            write_warn "GUI-Installation abschliessen, dann Launcher neu starten."
-        fi
-    elif command -v apt-get &>/dev/null; then
-        sudo apt-get update -qq || true; sudo apt-get install -y git || true
-    elif command -v dnf &>/dev/null; then
-        sudo dnf install -y git || true
-    elif command -v pacman &>/dev/null; then
-        sudo pacman -S --noconfirm git || true
-    elif command -v zypper &>/dev/null; then
-        sudo zypper install -y git || true
-    else
-        write_warn "Kein bekannter Paketmanager — git bitte manuell installieren."
-    fi
-    if command -v git &>/dev/null; then
-        write_ok "git installiert: $(command -v git)"
-        return 0
-    fi
-    write_warn "git weiterhin nicht verfuegbar — Repo-Setup wird uebersprungen."
-    return 1
-}
+# ensure_git ist oben im Skript definiert (wird vom Self-Update gebraucht).
 
 # ── Repo-Setup: Deploy-Keys dekodieren, Repos klonen/pullen ──
 setup_repos() {
@@ -560,27 +684,27 @@ setup_repos() {
     done
 
     # 3) private/-Verzeichnisse anlegen — Mount-Quelle fuer selbst angelegte
-    #    Skills/Commands/Agents (die Mounts kommen aus Bindings.md).
+    #    Skills/Commands/Agents (die Mounts kommen aus .bindings).
     local sub
     for sub in skills commands agents; do
         mkdir -p "${SCRIPT_DIR}/workspace/.claude/${sub}/private"
     done
 }
 
-# ── Bindings.md: auto-verwalteten Block der Repo-Mounts neu schreiben ──
+# ── .bindings: auto-verwalteten Block der Repo-Mounts neu schreiben ──
 # Eigene Eintraege ausserhalb der Marker bleiben unangetastet.
 update_managed_bindings() {
     local bf="$1"
     [[ -f "$bf" ]] || return 0
     local kept
-    # CR-tolerant: Marker auch erkennen, wenn Bindings.md CRLF-Zeilenenden hat.
+    # CR-tolerant: Marker auch erkennen, wenn .bindings CRLF-Zeilenenden hat.
     kept="$(awk -v b="$MANAGED_BIND_BEGIN" -v e="$MANAGED_BIND_END" '
         { l=$0; sub(/\r$/,"",l) }
         l==b {skip=1} !skip {print} l==e {skip=0}' "$bf")"
     {
         printf '%s\n\n' "$kept"
         echo "$MANAGED_BIND_BEGIN"
-        echo "# Auto-generiert vom Repo-Setup — Aenderungen hier werden bei jedem"
+        echo "# Auto-generiert vom Repo-Setup, Aenderungen hier werden bei jedem"
         echo "# Start ueberschrieben. senity-workspace liegt direkt in workspace/"
         echo "# und ist dadurch bereits unter /workspace/... sichtbar."
         local sub
@@ -604,7 +728,7 @@ ensure_git || true
 setup_repos
 
 # ══════════════════════════════════════════════════════════════
-# [5/6] Mounts vorbereiten (Bindings.md, Workspace, .claude)
+# [5/6] Mounts vorbereiten (.bindings, Workspace, .claude)
 # ══════════════════════════════════════════════════════════════
 write_sep
 write_info "[5/6] Mounts vorbereiten..."
@@ -644,20 +768,29 @@ DOCKER_ARGS=(
 )
 
 # Bindings.md auto-create
-bindings_file="${SCRIPT_DIR}/Bindings.md"
+bindings_file="${SCRIPT_DIR}/.bindings"
 if [[ ! -f "$bindings_file" ]]; then
     cat > "$bindings_file" <<'BINDINGS'
-# Senity Workspace — Mount-Pfade
+# Senity Workspace, Mount-Pfade
 # Format: <host-pfad>=<container-pfad>[:ro|:rw]
+# Excludes: '!<glob>' (gilt auf alle Mounts; Pattern im .gitignore-Stil)
 # Kommentare beginnen mit #, leere Zeilen werden ignoriert
 #
-# Host-Pfad:      beliebiges Verzeichnis — absolut (/Users/...), per ~ (~/projekte/foo)
-#                 oder relativ zum Projektverzeichnis (../mein-projekt).
-#                 Leerzeichen erlaubt; umschliessende '/" werden abgestreift.
+# Host-Pfad:      beliebiges Verzeichnis oder Datei, absolut (/Users/...),
+#                 per ~ (~/projekte/foo) oder relativ zum Projektverzeichnis
+#                 (../mein-projekt). Leerzeichen erlaubt; umschliessende '/"
+#                 werden abgestreift.
 # Container-Pfad: muss unterhalb von /workspace/ liegen (z.B. /workspace/mein-repo).
 #                 /workspace selbst und /workspace/.claude sind reserviert.
 # Modus:          optionales :ro (nur lesen) oder :rw (lesen+schreiben) am
 #                 Container-Pfad. Ohne Angabe: rw.
+# Excludes:       Zeilen beginnend mit '!' definieren Glob-Pattern, die in
+#                 ALLEN Mounts ueberlagert werden. Der Launcher mountet die
+#                 Treffer mit einem leeren Read-Only-Ordner, sodass sie im
+#                 Container nicht sichtbar sind. Beispiele:
+#                   !**/node_modules
+#                   !**/.git
+#                   !**/.env*
 
 # Beispiele:
 # ~/projekte/mein-repo=/workspace/mein-repo
@@ -665,24 +798,123 @@ if [[ ! -f "$bindings_file" ]]; then
 # ../nachbar-projekt=/workspace/nachbar
 # ~/docs/referenz=/workspace/referenz:ro
 BINDINGS
-    write_ok "Bindings.md angelegt (workspace/ ist bereits eingebunden — eigene Pfade ergaenzen)"
+    write_ok ".bindings angelegt (workspace/ ist bereits eingebunden, eigene Pfade ergaenzen)"
 fi
 
-# Repo-Mounts als auto-verwalteten Block in Bindings.md schreiben/aktualisieren
+# Repo-Mounts als auto-verwalteten Block in .bindings schreiben/aktualisieren
 update_managed_bindings "$bindings_file"
 
-write_info "Bindings.md wird ausgewertet..."
+# Pre-Scan: '!<glob>'-Excludes einsammeln (gelten global fuer alle Mounts).
+exclude_patterns=()
+pre_in_fence=0
+while IFS= read -r pre_line || [[ -n "$pre_line" ]]; do
+    pre_line="${pre_line%$'\r'}"
+    pre_line="$(echo "$pre_line" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
+    case "$pre_line" in
+        '```'*) pre_in_fence=$((1 - pre_in_fence)); continue ;;
+    esac
+    [[ "$pre_in_fence" -eq 1 ]] && continue
+    [[ -z "$pre_line" ]] && continue
+    case "$pre_line" in
+        '#'*) continue ;;
+        '!'*)
+            pat="${pre_line#!}"
+            pat="$(echo "$pat" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            [[ -n "$pat" ]] && exclude_patterns+=("$pat")
+            ;;
+    esac
+done < "$bindings_file"
+
+# Empty-Stage (leerer Ordner + leere Datei) als Overlay-Quelle fuer Excludes.
+mount_stage_dir="${SCRIPT_DIR}/.mount-stage"
+empty_dir="${mount_stage_dir}/empty"
+empty_file="${mount_stage_dir}/empty.file"
+if [[ ${#exclude_patterns[@]} -gt 0 ]]; then
+    mkdir -p "$empty_dir"
+    [[ -f "$empty_file" ]] || : > "$empty_file"
+    write_info "Excludes aktiv: ${exclude_patterns[*]}"
+fi
+
+overlay_count=0
+# Haengt fuer einen Mount (Source + Container-Base) Overlay-Mounts an DOCKER_ARGS
+# fuer alle Glob-Treffer. Unterstuetzt '**/<name>' (rekursiv) und '<name>'
+# (top-level). Pattern mit '/' im Restmuster werden uebersprungen.
+append_exclude_overlays() {
+    local src="$1"
+    local cbase="$2"
+    [[ ${#exclude_patterns[@]} -eq 0 ]] && return
+    [[ ! -d "$src" ]] && return
+    local pat name recursive maxdepth_arg seen_file
+    seen_file="$(mktemp 2>/dev/null || echo "${mount_stage_dir}/.seen.$$")"
+    : > "$seen_file"
+    for pat in "${exclude_patterns[@]}"; do
+        name="$pat"
+        recursive=0
+        if [[ "$pat" == '**/'* ]]; then
+            name="${pat#**/}"
+            recursive=1
+        fi
+        case "$name" in
+            */*|*\\*)
+                write_warn "Exclude '$pat' uebersprungen (nur Basename-Pattern unterstuetzt)"
+                continue
+                ;;
+        esac
+        if [[ "$recursive" -eq 1 ]]; then
+            maxdepth_arg=()
+        else
+            maxdepth_arg=(-maxdepth 1)
+        fi
+        while IFS= read -r -d '' hit; do
+            rel="${hit#$src}"
+            rel="${rel#/}"
+            [[ -z "$rel" ]] && continue
+            grep -Fxq "$rel" "$seen_file" && continue
+            printf '%s\n' "$rel" >> "$seen_file"
+            if [[ -d "$hit" ]]; then
+                DOCKER_ARGS+=(-v "${empty_dir}:${cbase}/${rel}:ro")
+            else
+                DOCKER_ARGS+=(-v "${empty_file}:${cbase}/${rel}:ro")
+            fi
+            overlay_count=$((overlay_count + 1))
+        done < <(find "$src" "${maxdepth_arg[@]}" -name "$name" -print0 2>/dev/null)
+    done
+    local cnt
+    cnt=$(wc -l < "$seen_file" | tr -d ' ')
+    rm -f "$seen_file"
+    if [[ "${cnt:-0}" -gt 0 ]]; then
+        write_info "  ${cnt} Exclude-Overlay(s) angehaengt"
+    fi
+}
+
+write_info ".bindings wird ausgewertet..."
 bind_count=0
 # Reservierte Container-Mountziele: kollidieren mit den eingebauten Mounts
 reserved_cpaths="/workspace /workspace/.claude"
 
+in_fence=0
 while IFS= read -r line || [[ -n "$line" ]]; do
-    line="$(echo "$line" | sed 's/#.*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
+    # Carriage-Return strippen (Windows-Editoren) und trimmen
+    line="${line%$'\r'}"
+    line="$(echo "$line" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
+
+    # Markdown-Strukturen ignorieren: Codefences, Leerzeilen, '#'-Headings/-Kommentare,
+    # HTML-Kommentare, Listen-/Tabellen-/Zitatzeilen und alles ohne '='.
+    case "$line" in
+        '```'*) in_fence=$((1 - in_fence)); continue ;;
+    esac
+    [[ "$in_fence" -eq 1 ]] && continue
     [[ -z "$line" ]] && continue
+    case "$line" in
+        '#'*|'<!--'*|'-->'*|'> '*|'| '*|'* '*|'- '*) continue ;;
+        '!'*) continue ;;
+    esac
+    [[ "$line" != *'=/'* ]] && continue
 
     # Host-Teil greedy bis zum letzten '=', Container-Teil ohne Space/'='.
-    # Erlaubt Host-Pfade mit Leerzeichen (z.B. '/Users/x/Claude Workspace').
-    if [[ "$line" =~ ^(.+)=([^[:space:]=]+)$ ]]; then
+    # Container-Pfad muss mit '/' beginnen (sonst ist es keine Mount-Zeile,
+    # sondern z.B. Markdown-Prosa mit '=' im Fliesstext).
+    if [[ "$line" =~ ^(.+)=(/[^[:space:]=]+)$ ]]; then
         host_part="${BASH_REMATCH[1]}"
         container_part="${BASH_REMATCH[2]}"
 
@@ -729,6 +961,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
             DOCKER_ARGS+=(-v "${full_host}:${container_part}:${mount_mode}")
             write_ok "Mount: $full_host => $container_part ($mount_mode)"
             bind_count=$((bind_count + 1))
+            append_exclude_overlays "$full_host" "$container_part"
         else
             write_warn "Binding-Pfad nicht gefunden (uebersprungen): $full_host"
         fi
@@ -736,7 +969,11 @@ while IFS= read -r line || [[ -n "$line" ]]; do
         write_warn "Ungueltige Binding-Zeile (Format: hostpfad=/workspace/<sub>): '$line'"
     fi
 done < "$bindings_file"
-write_ok "$bind_count Bindings aktiv"
+if [[ "$overlay_count" -gt 0 ]]; then
+    write_ok "$bind_count Bindings aktiv, $overlay_count Exclude-Overlay(s)"
+else
+    write_ok "$bind_count Bindings aktiv"
+fi
 
 # SSH + Git Mounts
 if [[ -d "$ssh_dir" ]]; then

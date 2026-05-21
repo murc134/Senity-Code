@@ -7,6 +7,9 @@ workspace/
 # Zur Laufzeit aus .env.shared dekodierte Deploy-Keys (NIE committen).
 # .env.shared selbst (mit den base64-Keys) wird bewusst committet.
 .deploy-keys/
+
+# Vom Launcher erzeugte leere Overlay-Quellen fuer .bindings-Excludes.
+.mount-stage/
 __pycache__/
 *.pyc
 .DS_Store
