@@ -19,7 +19,9 @@ Der Provider ist der Senity Chat Proxy.
 ## Kontext im Container
 
 - `/workspace` ist HOME und Arbeitsverzeichnis.
-- `/workspace/senity-workspace` — das Haupt-Projekt (Schreibzugriff).
+- `/workspace/projects/senity-workspace` — das Haupt-Projekt (Schreibzugriff).
+- `/workspace/projects/<name>` — weitere Repos, die ueber den Skill
+  `include-git-repository` geklont wurden (siehe Regel unten).
 - `/workspace/.claude/{skills,commands,agents}/` — jeweils mit drei
   Quellen nebeneinander:
   - `intern/`  — geteilte Repos (murc134), **read-only**.
@@ -38,6 +40,15 @@ Wenn du fuer den Nutzer einen **Skill, Command oder Agent** erstellst,
 
 Sagt der Nutzer nichts dazu, ist die Vorgabe **privat**.
 `intern/` ist read-only und niemals ein Speicherziel.
+
+## Regel: Git-URLs im Chat
+
+Wenn der Nutzer eine **Git-URL** (GitHub, GitLab, Gitea, generische
+`*.git`- oder `ssh://git@…`-URLs) irgendwo im Chat postet, schlage proaktiv
+vor, das Repo per `/include-git-repository <url>` nach
+`workspace/projects/<name>` zu klonen. Den Skill **nicht ungefragt**
+ausfuehren, sondern zuerst eine kurze Rueckfrage stellen. Erst nach OK
+oder explizitem Aufruf klonen.
 
 ## Arbeitsweise
 

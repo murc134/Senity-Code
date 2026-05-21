@@ -585,7 +585,7 @@ MANAGED_REPO_URLS=(
     "git@github.com:murc134/Claude-Agents.git"
 )
 MANAGED_REPO_DIRS=(
-    "workspace/senity-workspace"
+    "workspace/projects/senity-workspace"
     "workspace/.claude/skills/intern"
     "workspace/.claude/commands/intern"
     "workspace/.claude/agents/intern"
@@ -715,6 +715,11 @@ update_managed_bindings() {
             [[ -d "${HOME}/.claude/${sub}" ]] && \
                 echo "~/.claude/${sub}=/workspace/.claude/${sub}/global:rw"
         done
+        # Repo-eigene Skill-Ordner (read-only). senity-workspace und Projekte
+        # liegen unter workspace/projects/<name> und sind via /workspace-Mount
+        # automatisch sichtbar, brauchen also keinen eigenen Eintrag.
+        [[ -d "${SCRIPT_DIR}/skills" ]] && \
+            echo "skills=/workspace/.claude/skills/senity-workspace:ro"
         echo "$MANAGED_BIND_END"
     } > "$bf"
 }
@@ -767,38 +772,13 @@ DOCKER_ARGS=(
     -w /workspace
 )
 
-# Bindings.md auto-create
+# .bindings auto-create (reine Mount-Config, keine Markdown-Datei).
 bindings_file="${SCRIPT_DIR}/.bindings"
 if [[ ! -f "$bindings_file" ]]; then
     cat > "$bindings_file" <<'BINDINGS'
-# Senity Workspace, Mount-Pfade
-# Format: <host-pfad>=<container-pfad>[:ro|:rw]
-# Excludes: '!<glob>' (gilt auf alle Mounts; Pattern im .gitignore-Stil)
-# Kommentare beginnen mit #, leere Zeilen werden ignoriert
-#
-# Host-Pfad:      beliebiges Verzeichnis oder Datei, absolut (/Users/...),
-#                 per ~ (~/projekte/foo) oder relativ zum Projektverzeichnis
-#                 (../mein-projekt). Leerzeichen erlaubt; umschliessende '/"
-#                 werden abgestreift.
-# Container-Pfad: muss unterhalb von /workspace/ liegen (z.B. /workspace/mein-repo).
-#                 /workspace selbst und /workspace/.claude sind reserviert.
-# Modus:          optionales :ro (nur lesen) oder :rw (lesen+schreiben) am
-#                 Container-Pfad. Ohne Angabe: rw.
-# Excludes:       Zeilen beginnend mit '!' definieren Glob-Pattern, die in
-#                 ALLEN Mounts ueberlagert werden. Der Launcher mountet die
-#                 Treffer mit einem leeren Read-Only-Ordner, sodass sie im
-#                 Container nicht sichtbar sind. Beispiele:
-#                   !**/node_modules
-#                   !**/.git
-#                   !**/.env*
-
-# Beispiele:
-# ~/projekte/mein-repo=/workspace/mein-repo
-# /Users/ich/code/api=/workspace/api
-# ../nachbar-projekt=/workspace/nachbar
-# ~/docs/referenz=/workspace/referenz:ro
+# Format: <host>=<container>[:ro|:rw]   Excludes: !<glob>
 BINDINGS
-    write_ok ".bindings angelegt (workspace/ ist bereits eingebunden, eigene Pfade ergaenzen)"
+    write_ok ".bindings angelegt"
 fi
 
 # Repo-Mounts als auto-verwalteten Block in .bindings schreiben/aktualisieren
@@ -806,14 +786,9 @@ update_managed_bindings "$bindings_file"
 
 # Pre-Scan: '!<glob>'-Excludes einsammeln (gelten global fuer alle Mounts).
 exclude_patterns=()
-pre_in_fence=0
 while IFS= read -r pre_line || [[ -n "$pre_line" ]]; do
     pre_line="${pre_line%$'\r'}"
     pre_line="$(echo "$pre_line" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
-    case "$pre_line" in
-        '```'*) pre_in_fence=$((1 - pre_in_fence)); continue ;;
-    esac
-    [[ "$pre_in_fence" -eq 1 ]] && continue
     [[ -z "$pre_line" ]] && continue
     case "$pre_line" in
         '#'*) continue ;;
@@ -892,24 +867,16 @@ bind_count=0
 # Reservierte Container-Mountziele: kollidieren mit den eingebauten Mounts
 reserved_cpaths="/workspace /workspace/.claude"
 
-in_fence=0
 while IFS= read -r line || [[ -n "$line" ]]; do
     # Carriage-Return strippen (Windows-Editoren) und trimmen
     line="${line%$'\r'}"
     line="$(echo "$line" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
 
-    # Markdown-Strukturen ignorieren: Codefences, Leerzeilen, '#'-Headings/-Kommentare,
-    # HTML-Kommentare, Listen-/Tabellen-/Zitatzeilen und alles ohne '='.
-    case "$line" in
-        '```'*) in_fence=$((1 - in_fence)); continue ;;
-    esac
-    [[ "$in_fence" -eq 1 ]] && continue
+    # Leerzeilen, '#'-Kommentare und '!'-Excludes (im Pre-Scan erledigt) skippen.
     [[ -z "$line" ]] && continue
     case "$line" in
-        '#'*|'<!--'*|'-->'*|'> '*|'| '*|'* '*|'- '*) continue ;;
-        '!'*) continue ;;
+        '#'*|'!'*) continue ;;
     esac
-    [[ "$line" != *'=/'* ]] && continue
 
     # Host-Teil greedy bis zum letzten '=', Container-Teil ohne Space/'='.
     # Container-Pfad muss mit '/' beginnen (sonst ist es keine Mount-Zeile,
@@ -962,6 +929,14 @@ while IFS= read -r line || [[ -n "$line" ]]; do
             write_ok "Mount: $full_host => $container_part ($mount_mode)"
             bind_count=$((bind_count + 1))
             append_exclude_overlays "$full_host" "$container_part"
+        elif [[ -f "$full_host" ]]; then
+            # File-Bind-Mount (z.B. .bindings selbst): Parent normalisieren,
+            # dann Basename anhaengen. Keine Excludes auf Dateien.
+            file_parent="$(cd "$(dirname "$full_host")" && pwd)"
+            full_host="${file_parent}/$(basename "$full_host")"
+            DOCKER_ARGS+=(-v "${full_host}:${container_part}:${mount_mode}")
+            write_ok "Mount: $full_host => $container_part ($mount_mode, file)"
+            bind_count=$((bind_count + 1))
         else
             write_warn "Binding-Pfad nicht gefunden (uebersprungen): $full_host"
         fi

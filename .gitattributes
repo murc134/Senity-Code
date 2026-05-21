@@ -15,5 +15,5 @@ senity-theme.conf text eol=lf
 *       text=auto
 
 # .bindings wird vom Launcher geschrieben/geparst, LF erzwingen
-# (CRLF wuerde die Marker-Erkennung im awk-Parser brechen).
+# (CRLF wuerde die Marker-Erkennung im Parser brechen).
 .bindings text eol=lf

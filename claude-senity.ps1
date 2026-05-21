@@ -705,7 +705,7 @@ Write-INFO "[4/6] Repo-Setup (verwaltete Repos)..."
 # senity-workspace ist das Arbeits-Repo -> 'pull', sonst waere nicht-gepushte
 # Arbeit nach jedem Neustart verloren.
 $ManagedRepos = @(
-    @{ Key='senity-workspace'; Url='ssh://git@git.senity.ai:2200/senity/senity-workspace.git'; Dir='workspace/senity-workspace';        Mode='pull'  }
+    @{ Key='senity-workspace'; Url='ssh://git@git.senity.ai:2200/senity/senity-workspace.git'; Dir='workspace/projects/senity-workspace'; Mode='pull' }
     @{ Key='claude-skills';    Url='git@github.com:murc134/Claude-Skills.git';                 Dir='workspace/.claude/skills/intern';   Mode='fresh' }
     @{ Key='claude-commands';  Url='git@github.com:murc134/Claude-Commands.git';               Dir='workspace/.claude/commands/intern'; Mode='fresh' }
     @{ Key='claude-agents';    Url='git@github.com:murc134/Claude-Agents.git';                 Dir='workspace/.claude/agents/intern';   Mode='fresh' }
@@ -743,6 +743,12 @@ function Update-ManagedBindings {
         if (Test-Path (Join-Path $HOME ".claude\$sub")) {
             $block += "~/.claude/$sub=/workspace/.claude/$sub/global:rw"
         }
+    }
+    # Repo-eigener Skill-Ordner (read-only). senity-workspace und Projekte
+    # liegen unter workspace/projects/<name> und sind via /workspace-Mount
+    # automatisch sichtbar, brauchen also keinen eigenen Eintrag.
+    if (Test-Path (Join-Path $ScriptDir "skills")) {
+        $block += "skills=/workspace/.claude/skills/senity-workspace:ro"
     }
     $block += $ManagedBindEnd
     Set-Content -Path $Path -Value ($kept + @('') + $block) -Encoding UTF8
@@ -881,39 +887,14 @@ $dockerArgs = @(
     "-w", "/workspace"
 )
 
-# Bindings.md auto-create
+# .bindings auto-create (reine Mount-Config, keine Markdown-Datei).
 $bindingsFile = Join-Path $ScriptDir ".bindings"
 if (-not (Test-Path $bindingsFile)) {
     $defaultBindings = @"
-# Senity Workspace, Mount-Pfade
-# Format: <host-pfad>=<container-pfad>[:ro|:rw]
-# Excludes: '!<glob>' (gilt auf alle Mounts; Pattern im .gitignore-Stil)
-# Kommentare beginnen mit #, leere Zeilen werden ignoriert
-#
-# Host-Pfad:      beliebiges Verzeichnis oder Datei, absolut (C:\Users\...),
-#                 per ~ (~/projekte/foo) oder relativ zum Projektverzeichnis
-#                 (../mein-projekt). Leerzeichen erlaubt; umschliessende '/"
-#                 werden abgestreift.
-# Container-Pfad: muss unterhalb von /workspace/ liegen (z.B. /workspace/mein-repo).
-#                 /workspace selbst und /workspace/.claude sind reserviert.
-# Modus:          optionales :ro (nur lesen) oder :rw (lesen+schreiben) am
-#                 Container-Pfad. Ohne Angabe: rw.
-# Excludes:       Zeilen beginnend mit '!' definieren Glob-Pattern, die in
-#                 ALLEN Mounts ueberlagert werden. Der Launcher mountet die
-#                 Treffer mit einem leeren Read-Only-Ordner, sodass sie im
-#                 Container nicht sichtbar sind. Beispiele:
-#                   !**/node_modules
-#                   !**/.git
-#                   !**/.env*
-
-# Beispiele:
-# ~/projekte/mein-repo=/workspace/mein-repo
-# C:\Users\ich\code\api=/workspace/api
-# ../nachbar-projekt=/workspace/nachbar
-# ~/docs/referenz=/workspace/referenz:ro
+# Format: <host>=<container>[:ro|:rw]   Excludes: !<glob>
 "@
     Set-Content -Path $bindingsFile -Value $defaultBindings -Encoding UTF8
-    Write-OK ".bindings angelegt (workspace/ ist bereits eingebunden, eigene Pfade ergaenzen)"
+    Write-OK ".bindings angelegt"
 }
 
 # Repo-Mounts als auto-verwalteten Block in .bindings schreiben/aktualisieren
@@ -921,11 +902,8 @@ Update-ManagedBindings -Path $bindingsFile
 
 # Pre-Scan: '!<glob>'-Excludes einsammeln (gelten global fuer alle Mounts).
 $excludePatterns = @()
-$inFencePre = $false
 Get-Content $bindingsFile -Encoding UTF8 | ForEach-Object {
     $line = $_.Trim()
-    if ($line -match '^```') { $inFencePre = -not $inFencePre; return }
-    if ($inFencePre) { return }
     if ($line -eq '' -or $line -match '^#') { return }
     if ($line -match '^!(.+)$') {
         $pat = $Matches[1].Trim()
@@ -988,19 +966,12 @@ $bindCount      = 0
 $overlayCount   = 0
 # Reservierte Container-Mountziele: kollidieren mit den eingebauten Mounts
 $reservedCPaths = @('/workspace', '/workspace/.claude')
-$inFence = $false
 Get-Content $bindingsFile -Encoding UTF8 | ForEach-Object {
     $line = $_.Trim()
-    # Markdown-Strukturen ignorieren: Leerzeilen, '#'-Kommentare/-Headings,
-    # Fenced-Codeblocks (```), Listen, Tabellen, HTML-Kommentare und alles
-    # ohne '=' (reine Prosa). So darf .bindings eine echte .md-Datei sein.
-    if ($line -match '^```') { $inFence = -not $inFence; return }
-    if ($inFence) { return }
+    # Leerzeilen und '#'-Kommentare ignorieren; '!'-Excludes wurden im Pre-Scan
+    # bereits eingesammelt. Alles andere muss eine Mount-Zeile sein.
     if ($line -eq '' -or $line -match '^#') { return }
-    # '!'-Excludes wurden im Pre-Scan eingesammelt, hier nicht nochmal verarbeiten.
     if ($line -match '^!') { return }
-    if ($line -notmatch '=/') { return }
-    if ($line -match '^(<!--|-->|>|\||\*|-)\s' -or $line -match '^(\*\*|__)') { return }
     # Host-Teil greedy bis zum letzten '=', Container-Teil ohne Space/'='.
     # Erlaubt Host-Pfade mit Leerzeichen (z.B. 'C:\Users\x\Claude Workspace').
     if ($line -match '^(.+)=(/[^\s=]+)$') {

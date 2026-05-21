@@ -55,19 +55,19 @@ Hinweis: Der Senity Chat Proxy routet alle Modell-Strings intern uebers MSH-Gate
 
 ## Mount-Pfade
 
-`.bindings` steuert, welche Ordner in den Container gemountet werden:
+`.bindings` ist eine reine Mount-Config (keine Markdown-Datei). Leerzeilen und `#`-Kommentare werden ignoriert, alles andere muss eine Mount- oder Exclude-Zeile sein:
 
 ```
-# Format: <host-pfad>=<container-pfad>[:ro|:rw]
-./workspace=/workspace
-./projects/my-repo=/projects/my-repo
+# Format: <host>=<container>[:ro|:rw]   Excludes: !<glob>
+~/projekte/mein-repo=/workspace/mein-repo
+C:\Users\ich\code\api=/workspace/api
+~/docs/referenz=/workspace/referenz:ro
 
-# Excludes (gelten auf alle Mounts, Glob-Pattern im .gitignore-Stil)
 !**/node_modules
 !**/.git
 ```
 
-Standard: `./workspace=/workspace`. Wenn `.bindings` fehlt oder leer ist, wird nur `./workspace` eingebunden. `!`-Zeilen ueberlagern getroffene Unterpfade im Container mit einem leeren Read-Only-Ordner (kein Symlink, kein Admin noetig).
+`workspace/` und `.claude/` werden automatisch gemountet. Der vom Launcher verwaltete Block zwischen `# >>> SENITY-VERWALTET >>>` und `# <<< SENITY-VERWALTET <<<` enthaelt die Skills/Commands/Agents-Mounts und wird bei jedem Start neu geschrieben, von Hand nichts darin aendern. `!`-Zeilen ueberlagern getroffene Unterpfade im Container mit einem leeren Read-Only-Ordner (kein Symlink, kein Admin noetig).
 
 ## Config Mount
 
@@ -93,6 +93,26 @@ SENITY_CHAT_PROXY_KEY=<uuid-oder-64-hex-key>
 ```
 
 Beide Werte koennen alternativ als Prozess-Environment gesetzt sein, das `.env`-File hat aber Vorrang. `.env` ist via `.gitignore` ausgeschlossen.
+
+## Projekt-Repos (`workspace/projects/`)
+
+`senity-workspace` und alle weiteren Projekt-Repos liegen unter
+`workspace/projects/<name>` direkt im Repo. Da `workspace/` ohnehin nach
+`/workspace` im Container gemountet ist, sind sie automatisch unter
+`/workspace/projects/<name>` sichtbar, ohne zusaetzliche Mounts.
+
+- `senity-workspace` wird vom Launcher als `pull`-Repo verwaltet:
+  `workspace/projects/senity-workspace` (im Container:
+  `/workspace/projects/senity-workspace`).
+- Weitere Repos klont der Nutzer im Container ueber den Skill
+  `/include-git-repository <git-url>`. Default-Ziel:
+  `workspace/projects/<name-aus-url>`. Da der Klon im `/workspace`-Mount
+  liegt, ist er sofort persistent auf dem Host, **kein Container-Neustart
+  noetig**.
+
+Postet der Nutzer eine Git-URL im Chat, schlaegt Claude proaktiv vor,
+das Repo per `/include-git-repository` zu klonen, fuehrt es aber erst
+nach Rueckfrage aus.
 
 ## Docker Image
 

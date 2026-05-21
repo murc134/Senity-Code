@@ -11,6 +11,7 @@ das Repo-Setup, das vor jedem Container-Start läuft.
 |---|---|
 | `claude-senity.sh` / `.ps1` / `.bat` | Host-Launcher (Linux·macOS / Windows / Windows-Bootstrap) |
 | `.env.shared` | Committet: base64-kodierte **Deploy-Keys** (Klartext) fürs Repo-Setup |
+| `.env` | Gitignored: Proxy-Credentials (`SENITY_CHAT_PROXY_URL`, `SENITY_CHAT_PROXY_KEY`) |
 | `SYSTEM_PROMPT.md` | Wird bei jedem Start gelesen und Claude Code via `--append-system-prompt` mitgegeben |
 | `.bindings` | Host→Container-Mounts; enthält den auto-verwalteten Repo-Mount-Block und globale Exclude-Patterns |
 
@@ -26,7 +27,7 @@ Vor dem Container-Start klont/pullt der Launcher vier fest hinterlegte Repos
 
 | Repo | Klon-Ziel (Host) | Modus |
 |---|---|---|
-| `senity/senity-workspace` (git.senity.ai:2200) | `workspace/senity-workspace` | `pull` |
+| `senity/senity-workspace` (git.senity.ai:2200) | `workspace/projects/senity-workspace` | `pull` |
 | `murc134/Claude-Skills` | `workspace/.claude/skills/intern` | `fresh` |
 | `murc134/Claude-Commands` | `workspace/.claude/commands/intern` | `fresh` |
 | `murc134/Claude-Agents` | `workspace/.claude/agents/intern` | `fresh` |
@@ -62,12 +63,36 @@ der Claude-Code im Container sie befolgt.
 
 ## Mounts in `.bindings`
 
+`.bindings` ist eine reine Mount-Config (keine Markdown-Datei). Parser-Regeln:
+
+- Leerzeilen und `#`-Kommentare werden ignoriert.
+- Zeilen `<host>=<container>[:ro|:rw]` definieren Mounts. Container-Pfad muss
+  unter `/workspace/` liegen (außer den reservierten `/workspace` und
+  `/workspace/.claude`).
+- Zeilen `!<glob>` definieren globale Excludes (siehe unten).
+- Alles andere wirft eine Warnung. Keine Codefence-/Listen-/Tabellen-Logik mehr.
+
 Der Launcher (`update_managed_bindings` / `Update-ManagedBindings`) schreibt die
-neun `.claude`-Mounts bei jedem Start in einen Block zwischen
-`# >>> SENITY-VERWALTET … >>>` und `# <<< SENITY-VERWALTET <<<`. Der Block wird
-jedes Mal neu erzeugt, **nichts darin von Hand editieren**. Eigene Einträge
-außerhalb der Marker bleiben unangetastet. `senity-workspace` braucht keinen
-Eintrag (liegt in `workspace/`, via `/workspace`-Mount schon sichtbar).
+`.claude`-Mounts plus den Repo-Skill-Ordner (`skills/`) bei jedem Start in
+einen Block zwischen `# >>> SENITY-VERWALTET … >>>` und
+`# <<< SENITY-VERWALTET <<<`. Der Block wird jedes Mal neu erzeugt, **nichts
+darin von Hand editieren**. Eigene Einträge außerhalb der Marker bleiben
+unangetastet.
+
+### Projekt-Mounts via `workspace/projects/`
+
+`senity-workspace` und alle weiteren Projekt-Repos liegen unter
+`workspace/projects/<name>` direkt im Repo. Da `workspace/` ohnehin nach
+`/workspace` im Container gemountet wird, sind sie automatisch unter
+`/workspace/projects/<name>` sichtbar, ohne dass Mounts in `.bindings`
+oder eine separate Konfig-Datei nötig wären.
+
+- `senity-workspace` wird vom Launcher als `pull`-Repo verwaltet
+  (`workspace/projects/senity-workspace`).
+- Weitere Repos klont der Nutzer im Container über den Skill
+  `/include-git-repository <url>`. Der Skill legt das Repo unter
+  `/workspace/projects/<name>` an und nutzt damit ebenfalls den
+  vorhandenen `/workspace`-Mount, kein Container-Neustart nötig.
 
 ### Excludes (`!`-Pattern)
 
@@ -111,6 +136,10 @@ gezeigt. Manuelles Re-Login: einfach `workspace/.codex/` bzw.
 
 - **`fresh`-Repos vernichten lokale Änderungen:** Die drei `intern/`-Repos werden
   bei jedem Start gelöscht und neu geklont. `senity-workspace` ist deshalb `pull`.
+- **`senity-workspace` liegt unter `workspace/projects/`:** Der Launcher
+  klont/pullt nach `workspace/projects/senity-workspace`. Weitere Repos
+  legt der Skill `/include-git-repository` unter `workspace/projects/<name>`
+  ab und nutzt damit den vorhandenen `/workspace`-Mount.
 - **Klartext-Deploy-Keys in `.env.shared`:** base64 ist keine Verschlüsselung;
   Secret-Scanning kann anschlagen. Bewusst so entschieden.
 - **`murc134/*`-Deploy-Keys** müssen von `murc134` eingetragen werden, der
