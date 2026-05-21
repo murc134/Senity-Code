@@ -437,18 +437,22 @@ bindings_file="${SCRIPT_DIR}/Bindings.md"
 if [[ ! -f "$bindings_file" ]]; then
     cat > "$bindings_file" <<'BINDINGS'
 # Senity Workspace — Mount-Pfade
-# Format: <host-pfad>=<container-pfad>
+# Format: <host-pfad>=<container-pfad>[:ro|:rw]
 # Kommentare beginnen mit #, leere Zeilen werden ignoriert
 #
 # Host-Pfad:      beliebiges Verzeichnis — absolut (/Users/...), per ~ (~/projekte/foo)
 #                 oder relativ zum Projektverzeichnis (../mein-projekt).
+#                 Leerzeichen erlaubt; umschliessende '/" werden abgestreift.
 # Container-Pfad: muss unterhalb von /workspace/ liegen (z.B. /workspace/mein-repo).
 #                 /workspace selbst und /workspace/.claude sind reserviert.
+# Modus:          optionales :ro (nur lesen) oder :rw (lesen+schreiben) am
+#                 Container-Pfad. Ohne Angabe: rw.
 
 # Beispiele:
 # ~/projekte/mein-repo=/workspace/mein-repo
 # /Users/ich/code/api=/workspace/api
 # ../nachbar-projekt=/workspace/nachbar
+# ~/docs/referenz=/workspace/referenz:ro
 BINDINGS
     write_ok "Bindings.md angelegt (workspace/ ist bereits eingebunden — eigene Pfade ergaenzen)"
 fi
@@ -459,12 +463,26 @@ bind_count=0
 reserved_cpaths="/workspace /workspace/.claude"
 
 while IFS= read -r line || [[ -n "$line" ]]; do
-    line="$(echo "$line" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
-    [[ -z "$line" || "$line" == \#* ]] && continue
+    line="$(echo "$line" | sed 's/#.*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
+    [[ -z "$line" ]] && continue
 
-    if echo "$line" | grep -qE '^[^[:space:]=]+=[^[:space:]]+$'; then
-        host_part="${line%%=*}"
-        container_part="${line#*=}"
+    # Host-Teil greedy bis zum letzten '=', Container-Teil ohne Space/'='.
+    # Erlaubt Host-Pfade mit Leerzeichen (z.B. '/Users/x/Claude Workspace').
+    if [[ "$line" =~ ^(.+)=([^[:space:]=]+)$ ]]; then
+        host_part="${BASH_REMATCH[1]}"
+        container_part="${BASH_REMATCH[2]}"
+
+        # Whitespace um den Host-Pfad + umschliessende Quotes entfernen
+        host_part="$(echo "$host_part" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        host_part="${host_part#[\"\']}"
+        host_part="${host_part%[\"\']}"
+
+        # Optionales :ro/:rw-Suffix am Container-Pfad (Default: rw)
+        mount_mode="rw"
+        case "$container_part" in
+            *:ro) mount_mode="ro"; container_part="${container_part%:ro}" ;;
+            *:rw) mount_mode="rw"; container_part="${container_part%:rw}" ;;
+        esac
 
         # Reservierte Container-Pfade pruefen
         is_reserved=false
@@ -494,14 +512,14 @@ while IFS= read -r line || [[ -n "$line" ]]; do
         if [[ -d "$full_host" ]]; then
             # Pfad normalisieren (loest .. auf, portabel ohne GNU realpath)
             full_host="$(cd "$full_host" && pwd)"
-            DOCKER_ARGS+=(-v "${full_host}:${container_part}")
-            write_ok "Mount: $full_host => $container_part"
+            DOCKER_ARGS+=(-v "${full_host}:${container_part}:${mount_mode}")
+            write_ok "Mount: $full_host => $container_part ($mount_mode)"
             bind_count=$((bind_count + 1))
         else
             write_warn "Binding-Pfad nicht gefunden (uebersprungen): $full_host"
         fi
     else
-        write_warn "Ungueltige Binding-Zeile (Format: hostpfad=/containerpfad): '$line'"
+        write_warn "Ungueltige Binding-Zeile (Format: hostpfad=/workspace/<sub>): '$line'"
     fi
 done < "$bindings_file"
 write_ok "$bind_count Bindings aktiv"

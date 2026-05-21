@@ -499,18 +499,22 @@ $bindingsFile = Join-Path $ScriptDir "Bindings.md"
 if (-not (Test-Path $bindingsFile)) {
     $defaultBindings = @"
 # Senity Workspace — Mount-Pfade
-# Format: <host-pfad>=<container-pfad>
+# Format: <host-pfad>=<container-pfad>[:ro|:rw]
 # Kommentare beginnen mit #, leere Zeilen werden ignoriert
 #
 # Host-Pfad:      beliebiges Verzeichnis — absolut (C:\Users\...), per ~ (~/projekte/foo)
 #                 oder relativ zum Projektverzeichnis (../mein-projekt).
+#                 Leerzeichen erlaubt; umschliessende '/" werden abgestreift.
 # Container-Pfad: muss unterhalb von /workspace/ liegen (z.B. /workspace/mein-repo).
 #                 /workspace selbst und /workspace/.claude sind reserviert.
+# Modus:          optionales :ro (nur lesen) oder :rw (lesen+schreiben) am
+#                 Container-Pfad. Ohne Angabe: rw.
 
 # Beispiele:
 # ~/projekte/mein-repo=/workspace/mein-repo
 # C:\Users\ich\code\api=/workspace/api
 # ../nachbar-projekt=/workspace/nachbar
+# ~/docs/referenz=/workspace/referenz:ro
 "@
     Set-Content -Path $bindingsFile -Value $defaultBindings -Encoding UTF8
     Write-OK "Bindings.md angelegt (workspace/ ist bereits eingebunden — eigene Pfade ergaenzen)"
@@ -523,9 +527,18 @@ $reservedCPaths = @('/workspace', '/workspace/.claude')
 Get-Content $bindingsFile -Encoding UTF8 | ForEach-Object {
     $line = $_.Trim()
     if ($line -eq '' -or $line -match '^#') { return }
-    if ($line -match '^([^\s=]+)=([^\s]+)$') {
-        $hostPart      = $Matches[1]
+    # Host-Teil greedy bis zum letzten '=', Container-Teil ohne Space/'='.
+    # Erlaubt Host-Pfade mit Leerzeichen (z.B. 'C:\Users\x\Claude Workspace').
+    if ($line -match '^(.+)=([^\s=]+)$') {
+        $hostPart      = $Matches[1].Trim().Trim('"').Trim("'")
         $containerPart = $Matches[2]
+
+        # Optionales :ro/:rw-Suffix am Container-Pfad (Default: rw)
+        $mountMode = 'rw'
+        if ($containerPart -match '^(.+):(ro|rw)$') {
+            $containerPart = $Matches[1]
+            $mountMode     = $Matches[2]
+        }
 
         # Container-Pfad muss unterhalb von /workspace/ liegen; /workspace und
         # /workspace/.claude sind reserviert (eingebaute Mounts).
@@ -553,8 +566,8 @@ Get-Content $bindingsFile -Encoding UTF8 | ForEach-Object {
 
         if (Test-Path $canonicalized) {
             $dockerArgs += "-v"
-            $dockerArgs += "$(ConvertTo-DockerPath $canonicalized):${containerPart}"
-            Write-OK "Mount: $canonicalized => $containerPart"
+            $dockerArgs += "$(ConvertTo-DockerPath $canonicalized):${containerPart}:${mountMode}"
+            Write-OK "Mount: $canonicalized => $containerPart ($mountMode)"
             $bindCount++
         } else {
             Write-WARN "Binding-Pfad nicht gefunden (uebersprungen): $canonicalized"
