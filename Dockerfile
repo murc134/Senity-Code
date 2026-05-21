@@ -13,6 +13,16 @@ RUN apt-get update && apt-get install -y \
 # Claude Code CLI installieren
 RUN npm install -g @anthropic-ai/claude-code
 
+# Codex CLI (OpenAI / ChatGPT-Account) — Login via OAuth-Device-Flow.
+# Tokens landen in $HOME/.codex/ (= /workspace/.codex/), persistieren also
+# automatisch ueber den /workspace-Mount. Soft-Fail, damit das Image auch
+# baut, wenn das Paket temporaer nicht erreichbar ist.
+RUN npm install -g @openai/codex || echo "[WARN] @openai/codex install failed (codex CLI nicht verfuegbar)"
+
+# Gemini CLI (Google-Account) — Login via OAuth. Tokens landen in
+# $HOME/.gemini/ (= /workspace/.gemini/). Ebenfalls soft-fail.
+RUN npm install -g @google/gemini-cli || echo "[WARN] @google/gemini-cli install failed (gemini CLI nicht verfuegbar)"
+
 # Senity Theme (zentrale Farb-Konfiguration) ins Image kopieren
 COPY senity-theme.conf /etc/senity-theme.conf
 

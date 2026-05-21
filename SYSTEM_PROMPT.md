@@ -2,13 +2,15 @@
 
 <!--
 Diese Datei wird vom Launcher (claude-senity.sh/.ps1) bei JEDEM Start
-dynamisch eingelesen und Claude Code via `--append-system-prompt`
-mitgegeben. Aenderungen wirken sofort beim naechsten Start — kein
-Rebuild noetig.
+dynamisch eingelesen und Claude Code als SICHTBARE erste User-Nachricht
+uebergeben (Container-Entrypoint haengt den Inhalt als letzten positionalen
+Parameter an `claude` an). Aenderungen wirken sofort beim naechsten Start,
+kein Rebuild noetig.
 
-HTML-Kommentarbloecke wie dieser werden vor der Uebergabe entfernt.
-Leere Datei oder nur Kommentare => kein zusaetzlicher System-Prompt.
-Den eigentlichen Prompt-Text einfach unterhalb schreiben (Markdown ok).
+HTML-Kommentarbloecke wie dieser werden vor der Uebergabe entfernt. Leere
+Datei oder nur Kommentare bedeutet: keine initiale Nachricht. Wenn der
+Nutzer einen eigenen Prompt als Launcher-Argument mitgibt, wird diese
+Datei ignoriert (User-Prompt hat Vorrang).
 -->
 
 Du arbeitest im Senity Workspace — einem isolierten Docker-Container.

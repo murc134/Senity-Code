@@ -164,4 +164,18 @@ if [[ -t 1 && -z "${SENITY_NO_BANNER:-}" ]]; then
     printf '\n'
 fi
 
+# ── Initial-User-Nachricht aus SYSTEM_PROMPT.md ──
+# Der Launcher schreibt den gereinigten SYSTEM_PROMPT.md-Inhalt in eine
+# Datei innerhalb /workspace und setzt SENITY_INITIAL_PROMPT_FILE. Wir
+# lesen den Inhalt hier (Multi-Line in Bash zuverlaessig) und haengen ihn
+# als letztes Positional-Argument an, sodass Claude Code ihn als erste
+# User-Nachricht erhaelt. Die Datei wird nach dem Lesen geloescht (oneshot).
+if [[ -n "${SENITY_INITIAL_PROMPT_FILE:-}" && -f "${SENITY_INITIAL_PROMPT_FILE}" ]]; then
+    initial_prompt="$(cat "${SENITY_INITIAL_PROMPT_FILE}")"
+    rm -f "${SENITY_INITIAL_PROMPT_FILE}" 2>/dev/null || true
+    if [[ -n "${initial_prompt}" ]]; then
+        exec -- "$@" "${initial_prompt}"
+    fi
+fi
+
 exec -- "$@"

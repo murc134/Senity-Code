@@ -770,16 +770,86 @@ if ($Model) { $claudeArgs += @("--model", $Model) }
 if ($yolo)  { $claudeArgs += "--dangerously-skip-permissions" }
 
 # SYSTEM_PROMPT.md dynamisch einlesen (bei jedem Start neu, kein Rebuild noetig).
-# HTML-Kommentarbloecke <!-- ... --> werden entfernt.
-$sysPromptFile = Join-Path $ScriptDir "SYSTEM_PROMPT.md"
-if (Test-Path $sysPromptFile) {
-    $sysRaw   = Get-Content $sysPromptFile -Raw -Encoding UTF8
-    $sysClean = ([regex]::Replace($sysRaw, '(?s)<!--.*?-->', '')).Trim()
-    if ($sysClean -ne '') {
-        $claudeArgs += @("--append-system-prompt", $sysClean)
-        Write-OK "System-Prompt aus SYSTEM_PROMPT.md geladen"
+# HTML-Kommentarbloecke <!-- ... --> werden entfernt. Der gereinigte Inhalt wird
+# in eine Datei innerhalb /workspace geschrieben; der Entrypoint im Container
+# liest sie und uebergibt den Inhalt Claude Code als erste User-Nachricht
+# (sichtbar im Chat). Wenn der Nutzer einen eigenen positionalen Prompt
+# uebergeben hat ($Rest enthaelt ein Argument ohne "-"-Praefix), wird die
+# Datei NICHT geschrieben und Claude startet ohne automatische Nachricht.
+$hasUserPrompt = $false
+foreach ($r in $Rest) {
+    if ($null -ne $r -and "$r".Length -gt 0 -and -not ("$r".StartsWith('-'))) {
+        $hasUserPrompt = $true
+        break
     }
 }
+
+$initialPromptHostFile = Join-Path $workspacePath ".senity-initial-prompt"
+# Alt-Stand stets entfernen, damit kein Rest aus letztem Start uebrigbleibt.
+if (Test-Path $initialPromptHostFile) {
+    Remove-Item -LiteralPath $initialPromptHostFile -Force -ErrorAction SilentlyContinue
+}
+
+if (-not $hasUserPrompt) {
+    $sysPromptFile = Join-Path $ScriptDir "SYSTEM_PROMPT.md"
+    if (Test-Path $sysPromptFile) {
+        $sysRaw   = Get-Content $sysPromptFile -Raw -Encoding UTF8
+        $sysClean = ([regex]::Replace($sysRaw, '(?s)<!--.*?-->', '')).Trim()
+        if ($sysClean -ne '') {
+            # LF-Zeilenenden erzwingen — wir laufen in Bash im Container.
+            $sysCleanLF = $sysClean -replace "`r`n", "`n"
+            [System.IO.File]::WriteAllText($initialPromptHostFile, $sysCleanLF, [System.Text.UTF8Encoding]::new($false))
+            $dockerArgs += @("-e", "SENITY_INITIAL_PROMPT_FILE=/workspace/.senity-initial-prompt")
+            Write-OK "SYSTEM_PROMPT.md wird als erste User-Nachricht gesendet"
+        }
+    }
+}
+
+# ══════════════════════════════════════════════════════════════
+# [5b/6] Optionale CLI-Logins (Codex / Gemini)
+# ══════════════════════════════════════════════════════════════
+# Codex und Gemini CLI sind im Image installiert; Tokens persistieren ueber
+# /workspace ($HOME/.codex bzw. $HOME/.gemini). Wenn der Nutzer noch nicht
+# angebunden ist, fragen wir EINMAL mit Default = "n". Bei Zustimmung
+# starten wir einen kurzlebigen Container, der das CLI-Login interaktiv
+# ausfuehrt. Beide Logins nutzen OAuth (kein API-Key, keine Kosten).
+function Invoke-CliAuth {
+    param(
+        [string]$Label,           # "Codex (ChatGPT)" / "Gemini (Google)"
+        [string]$CredPath,        # workspace-relativer Pfad zur Token-Datei
+        [string[]]$LoginCmd       # Container-CMD zum interaktiven Login
+    )
+    $hostCredPath = Join-Path $workspacePath $CredPath
+    if (Test-Path $hostCredPath) { return }    # bereits eingerichtet
+
+    Write-Host ""
+    Write-Host "  $Label ist noch nicht angebunden." -ForegroundColor Yellow
+    $answer = Read-Host "  Jetzt per OAuth einrichten? [y/N]"
+    if ($answer -notmatch '^[yYjJ]') {
+        Write-OK "$Label uebersprungen (kein Login)"
+        return
+    }
+
+    Write-INFO "Starte interaktiven $Label-Login (Browser-/Device-Flow)..."
+    $authArgs = @(
+        "-it", "--rm",
+        "-v", "$(ConvertTo-DockerPath $workspacePath):/workspace",
+        "-e", "HOME=/workspace",
+        "-e", "TERM=xterm-256color",
+        "-w", "/workspace"
+    )
+    docker run @authArgs senity-claude:latest @LoginCmd
+    if ($LASTEXITCODE -eq 0 -and (Test-Path $hostCredPath)) {
+        Write-OK "$Label erfolgreich angebunden"
+    } else {
+        Write-WARN "$Label-Login nicht abgeschlossen (Exit $LASTEXITCODE)"
+    }
+}
+
+Write-Sep
+Write-INFO "[5b/6] Optionale CLI-Logins pruefen..."
+Invoke-CliAuth -Label "Codex (ChatGPT)" -CredPath ".codex\auth.json" -LoginCmd @("codex","login")
+Invoke-CliAuth -Label "Gemini (Google)" -CredPath ".gemini\oauth_creds.json" -LoginCmd @("gemini","auth","login")
 
 # ══════════════════════════════════════════════════════════════
 # [6/6] Container starten

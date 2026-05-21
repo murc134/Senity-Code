@@ -739,20 +739,90 @@ if [[ "$YOLO" == true ]]; then
 fi
 
 # SYSTEM_PROMPT.md dynamisch einlesen (bei jedem Start neu, kein Rebuild noetig).
-# HTML-Kommentarbloecke <!-- ... --> werden entfernt; bleibt Text uebrig,
-# wird er Claude Code via --append-system-prompt mitgegeben.
-sys_prompt_file="${SCRIPT_DIR}/SYSTEM_PROMPT.md"
-if [[ -f "$sys_prompt_file" ]]; then
-    if command -v perl &>/dev/null; then
-        sys_prompt_content="$(perl -0777 -pe 's/<!--.*?-->//gs' "$sys_prompt_file")"
-    else
-        sys_prompt_content="$(sed '/<!--/,/-->/d' "$sys_prompt_file")"
-    fi
-    if [[ -n "$(echo "$sys_prompt_content" | tr -d '[:space:]')" ]]; then
-        CLAUDE_ARGS+=("--append-system-prompt" "$sys_prompt_content")
-        write_ok "System-Prompt aus SYSTEM_PROMPT.md geladen"
+# HTML-Kommentarbloecke <!-- ... --> werden entfernt. Der gereinigte Inhalt
+# wird in eine Datei innerhalb /workspace geschrieben; der Container-
+# Entrypoint reicht ihn als erste (sichtbare) User-Nachricht an Claude Code
+# weiter. Wenn der Nutzer eigene positionale Argumente uebergeben hat (EXTRA
+# enthaelt mind. ein Argument ohne "-"-Praefix), wird die Datei nicht
+# geschrieben und Claude startet ohne automatische Nachricht.
+has_user_prompt=false
+if [[ ${#EXTRA[@]} -gt 0 ]]; then
+    for e in "${EXTRA[@]}"; do
+        if [[ -n "$e" && "${e:0:1}" != "-" ]]; then
+            has_user_prompt=true
+            break
+        fi
+    done
+fi
+
+initial_prompt_host_file="${workspace_path}/.senity-initial-prompt"
+rm -f "$initial_prompt_host_file" 2>/dev/null || true
+
+if [[ "$has_user_prompt" == false ]]; then
+    sys_prompt_file="${SCRIPT_DIR}/SYSTEM_PROMPT.md"
+    if [[ -f "$sys_prompt_file" ]]; then
+        if command -v perl &>/dev/null; then
+            sys_prompt_content="$(perl -0777 -pe 's/<!--.*?-->//gs' "$sys_prompt_file")"
+        else
+            sys_prompt_content="$(sed '/<!--/,/-->/d' "$sys_prompt_file")"
+        fi
+        # Trim Whitespace vorne und hinten
+        sys_prompt_content="$(printf '%s' "$sys_prompt_content" | awk '{ lines=lines $0 ORS } END { sub(/^[[:space:]]+/, "", lines); sub(/[[:space:]]+$/, "", lines); printf "%s", lines }')"
+        if [[ -n "$(printf '%s' "$sys_prompt_content" | tr -d '[:space:]')" ]]; then
+            printf '%s' "$sys_prompt_content" > "$initial_prompt_host_file"
+            DOCKER_ARGS+=(-e "SENITY_INITIAL_PROMPT_FILE=/workspace/.senity-initial-prompt")
+            write_ok "SYSTEM_PROMPT.md wird als erste User-Nachricht gesendet"
+        fi
     fi
 fi
+
+# ══════════════════════════════════════════════════════════════
+# [5b/6] Optionale CLI-Logins (Codex / Gemini)
+# ══════════════════════════════════════════════════════════════
+# Codex und Gemini CLI sind im Image installiert; Tokens persistieren ueber
+# /workspace ($HOME/.codex bzw. $HOME/.gemini). Wenn der Nutzer noch nicht
+# angebunden ist, fragen wir EINMAL mit Default = "n". Bei Zustimmung
+# starten wir einen kurzlebigen Container fuer das interaktive OAuth-Login.
+invoke_cli_auth() {
+    local label="$1"
+    local cred_rel="$2"
+    shift 2
+    local login_cmd=("$@")
+
+    local host_cred="${workspace_path}/${cred_rel}"
+    if [[ -e "$host_cred" ]]; then
+        return 0
+    fi
+
+    echo ""
+    printf "  ${c_magenta}%s ist noch nicht angebunden.${c_reset}\n" "$label"
+    printf "  Jetzt per OAuth einrichten? [y/N] "
+    local answer=""
+    read -r answer || answer=""
+    if [[ ! "$answer" =~ ^[yYjJ] ]]; then
+        write_ok "$label uebersprungen (kein Login)"
+        return 0
+    fi
+
+    write_info "Starte interaktiven ${label}-Login (Browser-/Device-Flow)..."
+    docker run -it --rm \
+        -v "${workspace_path}:/workspace" \
+        -e "HOME=/workspace" \
+        -e "TERM=xterm-256color" \
+        -w "/workspace" \
+        senity-claude:latest "${login_cmd[@]}"
+    local rc=$?
+    if [[ $rc -eq 0 && -e "$host_cred" ]]; then
+        write_ok "$label erfolgreich angebunden"
+    else
+        write_warn "${label}-Login nicht abgeschlossen (Exit $rc)"
+    fi
+}
+
+write_sep
+write_info "[5b/6] Optionale CLI-Logins pruefen..."
+invoke_cli_auth "Codex (ChatGPT)" ".codex/auth.json"        codex login
+invoke_cli_auth "Gemini (Google)" ".gemini/oauth_creds.json" gemini auth login
 
 # ══════════════════════════════════════════════════════════════
 # [6/6] Container starten

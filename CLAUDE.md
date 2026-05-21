@@ -72,8 +72,29 @@ Eintrag (liegt in `workspace/`, via `/workspace`-Mount schon sichtbar).
 ## SYSTEM_PROMPT.md
 
 Wird bei jedem Start gelesen, HTML-Kommentarblöcke (`<!-- … -->`) entfernt, der
-Rest via `--append-system-prompt` an Claude Code übergeben. Dynamisch —
-Änderungen wirken sofort, **kein Rebuild** nötig.
+gereinigte Rest in `workspace/.senity-initial-prompt` geschrieben (gitignored,
+oneshot) und via Env-Var `SENITY_INITIAL_PROMPT_FILE` ans Container-Entrypoint
+durchgereicht. Der Entrypoint hängt den Inhalt als letztes Positional-Argument
+an `claude` an, sodass er als **sichtbare erste User-Nachricht** im Chat
+landet. Gibt der Nutzer beim Launcher-Aufruf einen eigenen Positional-Prompt
+mit (z.B. `claude-senity.ps1 "do X"`), wird die Datei nicht geschrieben und
+der User-Prompt hat Vorrang. Dynamisch, **kein Rebuild** nötig.
+
+## Codex- und Gemini-CLI im Container
+
+Das Image installiert zusätzlich zur Claude Code CLI auch `@openai/codex` und
+`@google/gemini-cli` (jeweils soft-fail, falls npm-Registry temporär nicht
+erreichbar ist). Beide melden sich per **OAuth** an (kein API-Key, keine
+Kosten), Tokens landen unter `$HOME/.codex/` bzw. `$HOME/.gemini/` und
+persistieren automatisch über den `/workspace`-Mount.
+
+Vor dem Start (Phase `[5b/6]`) prüfen die Launcher, ob die Token-Dateien
+existieren. Wenn nicht, wird **einmalig** mit Default `n` gefragt, ob der
+jeweilige Account angebunden werden soll. Bei `y` startet ein kurzlebiger
+Container für den interaktiven `codex login` bzw. `gemini auth login`. Sobald
+Tokens persistiert sind, wird der Prompt bei späteren Starts nicht mehr
+gezeigt. Manuelles Re-Login: einfach `workspace/.codex/` bzw.
+`workspace/.gemini/` löschen.
 
 ## Gotchas
 
