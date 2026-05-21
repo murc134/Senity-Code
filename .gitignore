@@ -3,6 +3,10 @@ start.lnk
 *.lnk
 workspace/
 .claude/
+
+# Zur Laufzeit aus .env.shared dekodierte Deploy-Keys (NIE committen).
+# .env.shared selbst (mit den base64-Keys) wird bewusst committet.
+.deploy-keys/
 __pycache__/
 *.pyc
 .DS_Store

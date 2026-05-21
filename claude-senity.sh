@@ -183,9 +183,9 @@ if [[ "$SHOW_HELP" == true ]]; then
 fi
 
 # ══════════════════════════════════════════════════════════════
-# [1/5] TTY pruefen
+# [1/6] TTY pruefen
 # ══════════════════════════════════════════════════════════════
-write_info "[1/5] TTY pruefen..."
+write_info "[1/6] TTY pruefen..."
 
 if [[ ! -t 0 ]]; then
     exit_error "Kein TTY verfuegbar. Bitte direkt aus einem Terminal starten.
@@ -196,10 +196,10 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════
-# [2/5] .env laden + Credentials sicherstellen
+# [2/6] .env laden + Credentials sicherstellen
 # ══════════════════════════════════════════════════════════════
 write_sep
-write_info "[2/5] Credentials (Senity Chat Proxy)..."
+write_info "[2/6] Credentials (Senity Chat Proxy)..."
 
 ENV_FILE="${SCRIPT_DIR}/.env"
 read_env_file "$ENV_FILE"
@@ -303,10 +303,10 @@ write_ok "Yolo-Mode: $YOLO$(if [[ "$YOLO" == true ]]; then echo '  (Skip-Permiss
 safe_user="$(whoami | tr -cd 'a-zA-Z0-9_.-' | tr '[:upper:]' '[:lower:]')"
 
 # ══════════════════════════════════════════════════════════════
-# [3/5] Docker pruefen
+# [3/6] Docker pruefen
 # ══════════════════════════════════════════════════════════════
 write_sep
-write_info "[3/5] Docker pruefen..."
+write_info "[3/6] Docker pruefen..."
 
 if ! command -v docker &>/dev/null; then
     exit_error "Docker-CLI nicht im PATH gefunden.
@@ -396,10 +396,148 @@ if [[ $zombie_count -eq 0 ]]; then
 fi
 
 # ══════════════════════════════════════════════════════════════
-# [4/5] Mounts vorbereiten (Bindings.md, Workspace, .claude)
+# Verwaltete Repos — werden vor dem Container-Start geklont/gepullt.
+# Fest hinterlegt (Teil des Setups, nicht ueber Bindings.md steuerbar).
+# MODE: fresh = bei jedem Start loeschen + neu klonen; pull = klonen-
+# oder-pullen. senity-workspace ist das Arbeits-Repo -> pull, sonst
+# waere nicht-gepushte Arbeit nach jedem Neustart verloren.
+# ══════════════════════════════════════════════════════════════
+MANAGED_REPO_KEYS=( "senity-workspace" "claude-skills" "claude-commands" "claude-agents" )
+MANAGED_REPO_URLS=(
+    "ssh://git@git.senity.ai:2200/senity/senity-workspace.git"
+    "git@github.com:murc134/Claude-Skills.git"
+    "git@github.com:murc134/Claude-Commands.git"
+    "git@github.com:murc134/Claude-Agents.git"
+)
+MANAGED_REPO_DIRS=(
+    "workspace/senity-workspace"
+    "workspace/.claude/skills/intern"
+    "workspace/.claude/commands/intern"
+    "workspace/.claude/agents/intern"
+)
+MANAGED_REPO_MODES=( "pull" "fresh" "fresh" "fresh" )
+
+# Marker fuer den auto-verwalteten Block in Bindings.md
+MANAGED_BIND_BEGIN="# >>> SENITY-VERWALTET (auto-generiert vom Repo-Setup) >>>"
+MANAGED_BIND_END="# <<< SENITY-VERWALTET <<<"
+
+# ── Ein Repo klonen (Deploy-Key bevorzugt, Fallback normaler ~/.ssh) ──
+clone_managed_repo() {
+    local url="$1" dir="$2" kf="$3"
+    local ssh_cmd="ssh -o StrictHostKeyChecking=accept-new"
+    [[ -f "$kf" ]] && ssh_cmd="ssh -i ${kf} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+    mkdir -p "$(dirname "$dir")"
+    GIT_SSH_COMMAND="$ssh_cmd" git clone --quiet --branch main "$url" "$dir" 2>/dev/null && return 0
+    git clone --quiet --branch main "$url" "$dir" 2>/dev/null
+}
+
+# ── Repo-Setup: Deploy-Keys dekodieren, Repos klonen/pullen ──
+setup_repos() {
+    if ! command -v git &>/dev/null; then
+        write_warn "git nicht gefunden — Repo-Setup uebersprungen."
+        return 0
+    fi
+    local shared_env="${SCRIPT_DIR}/.env.shared"
+    local key_dir="${SCRIPT_DIR}/.deploy-keys"
+
+    # 1) Deploy-Keys aus .env.shared nach .deploy-keys/ dekodieren (chmod 600).
+    if [[ -f "$shared_env" ]] && command -v openssl &>/dev/null; then
+        mkdir -p "$key_dir"; chmod 700 "$key_dir" 2>/dev/null || true
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            [[ -z "$line" || "$line" == \#* ]] && continue
+            if [[ "$line" =~ ^([A-Za-z0-9_-]+)_B64=(.+)$ ]]; then
+                local kn="${BASH_REMATCH[1]}"
+                local kf="${key_dir}/${kn}"
+                if echo "${BASH_REMATCH[2]}" | openssl base64 -d -A > "$kf" 2>/dev/null && [[ -s "$kf" ]]; then
+                    chmod 600 "$kf" 2>/dev/null || true
+                else
+                    write_warn "Deploy-Key '$kn' nicht dekodierbar — uebersprungen."
+                    rm -f "$kf"
+                fi
+            fi
+        done < "$shared_env"
+    fi
+
+    # 2) Repos klonen / pullen (je nach MODE).
+    local i=0
+    local n=${#MANAGED_REPO_KEYS[@]}
+    while [[ $i -lt $n ]]; do
+        local kn="${MANAGED_REPO_KEYS[$i]}"
+        local url="${MANAGED_REPO_URLS[$i]}"
+        local rel="${MANAGED_REPO_DIRS[$i]}"
+        local mode="${MANAGED_REPO_MODES[$i]}"
+        local dir="${SCRIPT_DIR}/${rel}"
+        local kf="${key_dir}/${kn}"
+
+        if [[ "$mode" == "pull" && -d "${dir}/.git" ]]; then
+            write_info "Repo aktualisieren (pull): ${rel}"
+            local ssh_cmd="ssh -o StrictHostKeyChecking=accept-new"
+            [[ -f "$kf" ]] && ssh_cmd="ssh -i ${kf} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+            if ! GIT_SSH_COMMAND="$ssh_cmd" git -C "$dir" pull --ff-only --quiet 2>/dev/null \
+               && ! git -C "$dir" pull --ff-only --quiet 2>/dev/null; then
+                write_warn "Pull fehlgeschlagen (${rel}) — vorhandener Stand wird genutzt."
+            fi
+        else
+            if [[ "$mode" == "fresh" ]]; then
+                write_info "Repo frisch klonen: ${rel}"
+                rm -rf "$dir"
+            else
+                write_info "Repo klonen: ${rel}"
+            fi
+            if ! clone_managed_repo "$url" "$dir" "$kf"; then
+                write_warn "Klonen fehlgeschlagen (${url}) — Deploy-Key evtl. nicht registriert, kein ~/.ssh-Zugang."
+            fi
+        fi
+        i=$((i + 1))
+    done
+
+    # 3) private/-Verzeichnisse anlegen — Mount-Quelle fuer selbst angelegte
+    #    Skills/Commands/Agents (die Mounts kommen aus Bindings.md).
+    local sub
+    for sub in skills commands agents; do
+        mkdir -p "${SCRIPT_DIR}/workspace/.claude/${sub}/private"
+    done
+}
+
+# ── Bindings.md: auto-verwalteten Block der Repo-Mounts neu schreiben ──
+# Eigene Eintraege ausserhalb der Marker bleiben unangetastet.
+update_managed_bindings() {
+    local bf="$1"
+    [[ -f "$bf" ]] || return 0
+    local kept
+    kept="$(awk -v b="$MANAGED_BIND_BEGIN" -v e="$MANAGED_BIND_END" '
+        $0==b {skip=1} !skip {print} $0==e {skip=0}' "$bf")"
+    {
+        printf '%s\n\n' "$kept"
+        echo "$MANAGED_BIND_BEGIN"
+        echo "# Auto-generiert vom Repo-Setup — Aenderungen hier werden bei jedem"
+        echo "# Start ueberschrieben. senity-workspace liegt direkt in workspace/"
+        echo "# und ist dadurch bereits unter /workspace/... sichtbar."
+        local sub
+        for sub in skills commands agents; do
+            [[ -d "${SCRIPT_DIR}/workspace/.claude/${sub}/intern" ]] && \
+                echo "workspace/.claude/${sub}/intern=/workspace/.claude/${sub}/intern:ro"
+            echo "workspace/.claude/${sub}/private=/workspace/.claude/${sub}/private:rw"
+            [[ -d "${HOME}/.claude/${sub}" ]] && \
+                echo "~/.claude/${sub}=/workspace/.claude/${sub}/global:rw"
+        done
+        echo "$MANAGED_BIND_END"
+    } > "$bf"
+}
+
+# ══════════════════════════════════════════════════════════════
+# [4/6] Verwaltete Repos klonen/pullen (vor dem Container-Start)
 # ══════════════════════════════════════════════════════════════
 write_sep
-write_info "[4/5] Mounts vorbereiten..."
+write_info "[4/6] Repo-Setup (verwaltete Repos)..."
+setup_repos
+
+# ══════════════════════════════════════════════════════════════
+# [5/6] Mounts vorbereiten (Bindings.md, Workspace, .claude)
+# ══════════════════════════════════════════════════════════════
+write_sep
+write_info "[5/6] Mounts vorbereiten..."
 
 container_name="senity-workspace-${safe_user}-$$"
 workspace_path="${SCRIPT_DIR}/workspace"
@@ -459,6 +597,9 @@ if [[ ! -f "$bindings_file" ]]; then
 BINDINGS
     write_ok "Bindings.md angelegt (workspace/ ist bereits eingebunden — eigene Pfade ergaenzen)"
 fi
+
+# Repo-Mounts als auto-verwalteten Block in Bindings.md schreiben/aktualisieren
+update_managed_bindings "$bindings_file"
 
 write_info "Bindings.md wird ausgewertet..."
 bind_count=0
@@ -547,11 +688,23 @@ if [[ "$YOLO" == true ]]; then
     CLAUDE_ARGS+=("--dangerously-skip-permissions")
 fi
 
+# SYSTEM_PROMPT.md dynamisch einlesen (bei jedem Start neu, kein Rebuild noetig).
+# HTML-Kommentarbloecke <!-- ... --> werden entfernt; bleibt Text uebrig,
+# wird er Claude Code via --append-system-prompt mitgegeben.
+sys_prompt_file="${SCRIPT_DIR}/SYSTEM_PROMPT.md"
+if [[ -f "$sys_prompt_file" ]]; then
+    sys_prompt_content="$(sed '/<!--/,/-->/d' "$sys_prompt_file")"
+    if [[ -n "$(echo "$sys_prompt_content" | tr -d '[:space:]')" ]]; then
+        CLAUDE_ARGS+=("--append-system-prompt" "$sys_prompt_content")
+        write_ok "System-Prompt aus SYSTEM_PROMPT.md geladen"
+    fi
+fi
+
 # ══════════════════════════════════════════════════════════════
-# [5/5] Container starten
+# [6/6] Container starten
 # ══════════════════════════════════════════════════════════════
 write_sep
-write_info "[5/5] Container starten..."
+write_info "[6/6] Container starten..."
 
 echo ""
 printf "  ${c_magenta}════════════════════════════════════════════${c_reset}\n"

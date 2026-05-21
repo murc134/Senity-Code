@@ -207,9 +207,9 @@ if ($CreateShortcut) {
 }
 
 # ══════════════════════════════════════════════════════════════
-# [1/5] TTY pruefen (bei Bedarf in Windows Terminal relaunchen)
+# [1/6] TTY pruefen (bei Bedarf in Windows Terminal relaunchen)
 # ══════════════════════════════════════════════════════════════
-Write-INFO "[1/5] TTY pruefen..."
+Write-INFO "[1/6] TTY pruefen..."
 Write-DBG "IsInputRedirected  : $([System.Console]::IsInputRedirected)"
 Write-DBG "IsOutputRedirected : $([System.Console]::IsOutputRedirected)"
 
@@ -264,10 +264,10 @@ Remove-Item -Path `$MyInvocation.MyCommand.Path -ErrorAction SilentlyContinue
 }
 
 # ══════════════════════════════════════════════════════════════
-# [2/5] .env laden + Credentials sicherstellen (interaktiv + Validierung)
+# [2/6] .env laden + Credentials sicherstellen (interaktiv + Validierung)
 # ══════════════════════════════════════════════════════════════
 Write-Sep
-Write-INFO "[2/5] Credentials (Senity Chat Proxy)..."
+Write-INFO "[2/6] Credentials (Senity Chat Proxy)..."
 
 $envFile  = Join-Path $ScriptDir ".env"
 $envVars  = Read-EnvFile -Path $envFile
@@ -358,10 +358,10 @@ Write-OK "Yolo-Mode: $([bool]$yolo)$(if ($yolo) { '  (Skip-Permissions aktiv, Co
 $safeUser = ($env:USERNAME -replace '[^a-zA-Z0-9_.-]', '_').ToLower()
 
 # ══════════════════════════════════════════════════════════════
-# [3/5] Docker pruefen
+# [3/6] Docker pruefen
 # ══════════════════════════════════════════════════════════════
 Write-Sep
-Write-INFO "[3/5] Docker pruefen..."
+Write-INFO "[3/6] Docker pruefen..."
 
 $dockerBin = Get-Command docker -ErrorAction SilentlyContinue
 if (-not $dockerBin) {
@@ -461,10 +461,146 @@ if ($zombies -and $LASTEXITCODE -eq 0) {
 }
 
 # ══════════════════════════════════════════════════════════════
-# [4/5] Mounts vorbereiten (Bindings.md, Workspace, .claude)
+# [4/6] Verwaltete Repos klonen/pullen (vor dem Container-Start)
 # ══════════════════════════════════════════════════════════════
 Write-Sep
-Write-INFO "[4/5] Mounts vorbereiten..."
+Write-INFO "[4/6] Repo-Setup (verwaltete Repos)..."
+
+# Fest hinterlegte Repos (Teil des Setups, nicht ueber Bindings.md steuerbar).
+# Mode: fresh = bei jedem Start loeschen + neu klonen; pull = klonen-oder-pullen.
+# senity-workspace ist das Arbeits-Repo -> 'pull', sonst waere nicht-gepushte
+# Arbeit nach jedem Neustart verloren.
+$ManagedRepos = @(
+    @{ Key='senity-workspace'; Url='ssh://git@git.senity.ai:2200/senity/senity-workspace.git'; Dir='workspace/senity-workspace';        Mode='pull'  }
+    @{ Key='claude-skills';    Url='git@github.com:murc134/Claude-Skills.git';                 Dir='workspace/.claude/skills/intern';   Mode='fresh' }
+    @{ Key='claude-commands';  Url='git@github.com:murc134/Claude-Commands.git';               Dir='workspace/.claude/commands/intern'; Mode='fresh' }
+    @{ Key='claude-agents';    Url='git@github.com:murc134/Claude-Agents.git';                 Dir='workspace/.claude/agents/intern';   Mode='fresh' }
+)
+$keyDir = Join-Path $ScriptDir ".deploy-keys"
+
+# Marker fuer den auto-verwalteten Block in Bindings.md
+$ManagedBindBegin = '# >>> SENITY-VERWALTET (auto-generiert vom Repo-Setup) >>>'
+$ManagedBindEnd   = '# <<< SENITY-VERWALTET <<<'
+
+# Repo-Mounts als auto-verwalteten Block in Bindings.md schreiben/aktualisieren.
+# Eigene Eintraege ausserhalb der Marker bleiben unangetastet.
+function Update-ManagedBindings {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return }
+    $lines = @(Get-Content $Path -Encoding UTF8)
+    $kept = @(); $skip = $false
+    foreach ($ln in $lines) {
+        if ($ln -eq $ManagedBindBegin) { $skip = $true; continue }
+        if ($ln -eq $ManagedBindEnd)   { $skip = $false; continue }
+        if (-not $skip) { $kept += $ln }
+    }
+    $lastNonEmpty = -1
+    for ($k = 0; $k -lt $kept.Count; $k++) { if ($kept[$k].Trim() -ne '') { $lastNonEmpty = $k } }
+    if ($lastNonEmpty -ge 0) { $kept = @($kept[0..$lastNonEmpty]) } else { $kept = @() }
+    $block = @($ManagedBindBegin,
+        '# Auto-generiert vom Repo-Setup — Aenderungen hier werden bei jedem',
+        '# Start ueberschrieben. senity-workspace liegt direkt in workspace/',
+        '# und ist dadurch bereits unter /workspace/... sichtbar.')
+    foreach ($sub in @('skills','commands','agents')) {
+        if (Test-Path (Join-Path $ScriptDir "workspace\.claude\$sub\intern")) {
+            $block += "workspace/.claude/$sub/intern=/workspace/.claude/$sub/intern:ro"
+        }
+        $block += "workspace/.claude/$sub/private=/workspace/.claude/$sub/private:rw"
+        if (Test-Path (Join-Path $HOME ".claude\$sub")) {
+            $block += "~/.claude/$sub=/workspace/.claude/$sub/global:rw"
+        }
+    }
+    $block += $ManagedBindEnd
+    Set-Content -Path $Path -Value ($kept + @('') + $block) -Encoding UTF8
+}
+
+$gitBin = Get-Command git -ErrorAction SilentlyContinue
+if (-not $gitBin) {
+    Write-WARN "git nicht gefunden — Repo-Setup uebersprungen."
+} else {
+    # 1) Deploy-Keys aus .env.shared dekodieren (.deploy-keys/, ACL gesperrt)
+    $sharedEnv = Join-Path $ScriptDir ".env.shared"
+    if (Test-Path $sharedEnv) {
+        if (-not (Test-Path $keyDir)) { New-Item -ItemType Directory -Path $keyDir -Force | Out-Null }
+        Get-Content $sharedEnv -Encoding UTF8 | ForEach-Object {
+            $l = $_.Trim()
+            if ($l -eq '' -or $l -match '^#') { return }
+            if ($l -match '^([A-Za-z0-9_-]+)_B64=(.+)$') {
+                $kn = $Matches[1]; $kb64 = $Matches[2]
+                $kf = Join-Path $keyDir $kn
+                try {
+                    [System.IO.File]::WriteAllBytes($kf, [Convert]::FromBase64String($kb64))
+                    icacls $kf /inheritance:r /grant:r "$($env:USERNAME):F" 2>&1 | Out-Null
+                    Write-OK "Deploy-Key dekodiert: $kn"
+                } catch {
+                    Write-WARN "Deploy-Key '$kn' nicht dekodierbar — uebersprungen."
+                    if (Test-Path $kf) { Remove-Item $kf -Force -ErrorAction SilentlyContinue }
+                }
+            }
+        }
+    }
+
+    # 2) Repos klonen / pullen (je nach Mode)
+    foreach ($repo in $ManagedRepos) {
+        $dir = Join-Path $ScriptDir ($repo.Dir -replace '/', '\')
+        $kf  = Join-Path $keyDir $repo.Key
+        $hasKey = Test-Path $kf
+
+        if ($repo.Mode -eq 'pull' -and (Test-Path (Join-Path $dir '.git'))) {
+            Write-INFO "Repo aktualisieren (pull): $($repo.Dir)"
+            if ($hasKey) { $env:GIT_SSH_COMMAND = "ssh -i `"$kf`" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" }
+            else         { $env:GIT_SSH_COMMAND = "ssh -o StrictHostKeyChecking=accept-new" }
+            git -C $dir pull --ff-only --quiet 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                $env:GIT_SSH_COMMAND = "ssh -o StrictHostKeyChecking=accept-new"
+                git -C $dir pull --ff-only --quiet 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-WARN "Pull fehlgeschlagen ($($repo.Dir)) — vorhandener Stand wird genutzt."
+                }
+            }
+            $env:GIT_SSH_COMMAND = $null
+        } else {
+            if ($repo.Mode -eq 'fresh') {
+                Write-INFO "Repo frisch klonen: $($repo.Dir)"
+                if (Test-Path $dir) { Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue }
+            } else {
+                Write-INFO "Repo klonen: $($repo.Dir)"
+            }
+            $parent = Split-Path -Parent $dir
+            if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+            $cloned = $false
+            if ($hasKey) {
+                $env:GIT_SSH_COMMAND = "ssh -i `"$kf`" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+                git clone --quiet --branch main $repo.Url $dir 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) { $cloned = $true }
+            }
+            if (-not $cloned) {
+                $env:GIT_SSH_COMMAND = "ssh -o StrictHostKeyChecking=accept-new"
+                git clone --quiet --branch main $repo.Url $dir 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) { $cloned = $true }
+            }
+            $env:GIT_SSH_COMMAND = $null
+            if (-not $cloned) {
+                Write-WARN "Klonen fehlgeschlagen ($($repo.Url))."
+                Write-WARN "Deploy-Key evtl. nicht registriert und kein ~/.ssh-Zugang."
+            }
+        }
+    }
+
+    # 3) private/-Verzeichnisse anlegen — Mount-Quelle fuer selbst angelegte
+    #    Skills/Commands/Agents. Die Mounts kommen aus Bindings.md.
+    foreach ($sub in @('skills','commands','agents')) {
+        $p = Join-Path $ScriptDir "workspace\.claude\$sub\private"
+        if (-not (Test-Path $p)) { New-Item -ItemType Directory -Path $p -Force | Out-Null }
+    }
+}
+Write-OK "Repo-Setup abgeschlossen"
+
+# ══════════════════════════════════════════════════════════════
+# [5/6] Mounts vorbereiten (Bindings.md, Workspace, .claude)
+# ══════════════════════════════════════════════════════════════
+Write-Sep
+Write-INFO "[5/6] Mounts vorbereiten..."
 
 $containerName = "senity-workspace-$safeUser-$PID"
 $workspacePath = Join-Path $ScriptDir "workspace"
@@ -523,6 +659,9 @@ if (-not (Test-Path $bindingsFile)) {
     Set-Content -Path $bindingsFile -Value $defaultBindings -Encoding UTF8
     Write-OK "Bindings.md angelegt (workspace/ ist bereits eingebunden — eigene Pfade ergaenzen)"
 }
+
+# Repo-Mounts als auto-verwalteten Block in Bindings.md schreiben/aktualisieren
+Update-ManagedBindings -Path $bindingsFile
 
 Write-INFO "Bindings.md wird ausgewertet..."
 $bindCount      = 0
@@ -596,11 +735,23 @@ $claudeArgs = @()
 if ($Model) { $claudeArgs += @("--model", $Model) }
 if ($yolo)  { $claudeArgs += "--dangerously-skip-permissions" }
 
+# SYSTEM_PROMPT.md dynamisch einlesen (bei jedem Start neu, kein Rebuild noetig).
+# HTML-Kommentarbloecke <!-- ... --> werden entfernt.
+$sysPromptFile = Join-Path $ScriptDir "SYSTEM_PROMPT.md"
+if (Test-Path $sysPromptFile) {
+    $sysRaw   = Get-Content $sysPromptFile -Raw -Encoding UTF8
+    $sysClean = ([regex]::Replace($sysRaw, '(?s)<!--.*?-->', '')).Trim()
+    if ($sysClean -ne '') {
+        $claudeArgs += @("--append-system-prompt", $sysClean)
+        Write-OK "System-Prompt aus SYSTEM_PROMPT.md geladen"
+    }
+}
+
 # ══════════════════════════════════════════════════════════════
-# [5/5] Container starten
+# [6/6] Container starten
 # ══════════════════════════════════════════════════════════════
 Write-Sep
-Write-INFO "[5/5] Container starten..."
+Write-INFO "[6/6] Container starten..."
 
 Write-Host ""
 Write-Host "  ════════════════════════════════════════════" -ForegroundColor Magenta
