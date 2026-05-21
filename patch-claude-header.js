@@ -67,15 +67,18 @@ const textReplacements = [
     ['API Usage Billing',          'Senity Chat Proxy'],
     ['Welcome back!',              'Willkommen!'],     // 13B -> 11B + 2 Spaces padding
     ["What's new",                 'Neuheiten'],       // 10B -> 9B + 1 Space padding
-    // Welcome-Box-Titel: "Claude Code" (11B) -> "Senity Wksp" (11B). Voller String
-    // "Senity Workspace v1.0" passt nicht in den Binary-Slot ohne Code-Surgery.
-    // Mehrere Slots: ,"Claude Code") , title:"Claude Code" , name:"Claude Code"
-    [',"Claude Code")',            ',"Senity Wksp")'],   // 15B -> 15B
-    ['title:"Claude Code"',        'title:"Senity Wksp"'], // 19B -> 19B
-    ['name:"Claude Code"',         'name:"Senity Wksp"'],  // 18B -> 18B
     // Version-Konstante: "2.1.143" (7B) -> "1.0    " (7B mit Trailing-Spaces).
     // dimColor im Welcome-Box rendert Trailing-Spaces unsichtbar.
     ['VERSION:"2.1.143"',          'VERSION:"1.0    "'], // 17B -> 17B
+    // ─ Generisches Branding-Rewrite ─
+    // Jedes exakte "Claude" -> "Senity" (auch "Claude Code" -> "Senity Code",
+    // Welcome-Box-Titel, System-Prompt, Hilfe-/Abrechnungstexte).
+    // MUSS die letzte Regel sein, damit die spezifischen Phrasen oben zuerst
+    // greifen. "Claude" und "Senity" sind beide 6 Byte -> binary-safe, kein
+    // Padding. Case-sensitiv: "claude" (CLI-Befehl, npm-Pfad @anthropic-ai/
+    // claude-code, Theme-Tokens) und "CLAUDE" (CLAUDE.md, /init) bleiben
+    // bewusst unberuehrt — ihre Ersetzung wuerde Funktionalitaet zerstoeren.
+    ['Claude',                     'Senity'],
 ];
 
 // ─── Farb-Ersetzungen ───────────────────────────────────────────
@@ -140,45 +143,54 @@ const colorReplacements = [
 // nicht mehr (kein Crash — "Senity" erscheint dann nur nicht im Picker).
 // Wird ausschliesslich auf Text-Dateien angewendet, nie auf Binaries.
 const SENITY_THEME_TOKENS = [
-    'claude:"rgb(255,0,187)"',
-    'claudeShimmer:"rgb(174,0,255)"',
-    'briefLabelClaude:"rgb(255,3,187)"',
+    // Haupt-Akzent (Claude)
+    'claude:"rgb(255,0,175)"',
+    'claudeShimmer:"rgb(166,0,255)"',
+    'briefLabelClaude:"rgb(255,0,175)"',
+    // Text & Hintergrund
     'text:"rgb(255,255,255)"',
     'inverseText:"rgb(0,0,0)"',
-    'inactive:"rgb(155,125,151)"',
+    'inactive:"rgb(255,209,249)"',
     'inactiveShimmer:"rgb(198,159,191)"',
-    'subtle:"rgb(122,92,121)"',
+    'subtle:"rgb(183,115,206)"',
+    // Prompt & Borders
     'promptBorder:"rgb(105,76,153)"',
-    'promptBorderShimmer:"rgb(105,76,153)"',
+    'promptBorderShimmer:"rgb(135,95,175)"',
     'bashBorder:"rgb(253,93,177)"',
+    // Berechtigungen & System
     'permission:"rgb(200,179,249)"',
     'permissionShimmer:"rgb(237,209,255)"',
-    'claudeBlue_FOR_SYSTEM_SPINNER:"rgb(226,148,255)"',
-    'claudeBlueShimmer_FOR_SYSTEM_SPINNER:"rgb(250,179,255)"',
-    'suggestion:"rgb(241,179,249)"',
-    'remember:"rgb(248,179,249)"',
-    'briefLabelYou:"rgb(231,36,235)"',
+    'claudeBlue_FOR_SYSTEM_SPINNER:"rgb(175,135,255)"',
+    'claudeBlueShimmer_FOR_SYSTEM_SPINNER:"rgb(214,179,255)"',
+    'suggestion:"rgb(225,160,245)"',
+    'remember:"rgb(235,170,250)"',
+    'briefLabelYou:"rgb(175,135,255)"',
+    // Status-Farben
     'success:"rgb(79,186,91)"',
-    'error:"rgb(255,66,95)"',
-    'warning:"rgb(255,3,187)"',
-    'warningShimmer:"rgb(255,0,162)"',
+    'error:"rgb(255,82,108)"',
+    'warning:"rgb(255,90,200)"',
+    'warningShimmer:"rgb(255,140,220)"',
     'merged:"rgb(175,135,255)"',
     'autoAccept:"rgb(175,135,255)"',
-    'diffAdded:"rgb(255,255,255)"',
-    'diffRemoved:"rgb(0,0,0)"',
-    'diffAddedDimmed:"rgb(98,0,143)"',
-    'diffRemovedDimmed:"rgb(255,0,187)"',
-    'diffAddedWord:"rgb(255,0,187)"',
-    'diffRemovedWord:"rgb(217,217,217)"',
-    'planMode:"rgb(105,76,153)"',
-    'fastMode:"rgb(255,3,187)"',
-    'fastModeShimmer:"rgb(255,255,255)"',
+    // Diff-Farben
+    'diffAdded:"rgb(28,64,44)"',
+    'diffRemoved:"rgb(74,32,44)"',
+    'diffAddedDimmed:"rgb(40,52,46)"',
+    'diffRemovedDimmed:"rgb(58,40,46)"',
+    'diffAddedWord:"rgb(86,196,118)"',
+    'diffRemovedWord:"rgb(228,108,130)"',
+    // Modi
+    'planMode:"rgb(135,95,175)"',
+    'fastMode:"rgb(255,0,175)"',
+    'fastModeShimmer:"rgb(255,140,220)"',
     'ide:"rgb(184,151,195)"',
-    'background:"rgb(202,145,194)"',
-    'rate_limit_fill:"rgb(255,3,187)"',
-    'rate_limit_empty:"rgb(98,1,143)"',
-    'professionalBlue:"rgb(221,119,223)"',
+    'background:"rgb(135,95,175)"',
+    // Rate Limit & Misc
+    'rate_limit_fill:"rgb(255,0,175)"',
+    'rate_limit_empty:"rgb(58,40,72)"',
+    'professionalBlue:"rgb(190,140,230)"',
     'chromeYellow:"rgb(251,188,4)"',
+    // Rainbow (Subagents)
     'rainbow_red:"rgb(236,91,91)"',
     'rainbow_orange:"rgb(245,139,87)"',
     'rainbow_yellow:"rgb(250,195,95)"',
