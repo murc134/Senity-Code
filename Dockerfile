@@ -23,8 +23,11 @@ RUN npm install -g @openai/codex || echo "[WARN] @openai/codex install failed (c
 # $HOME/.gemini/ (= /workspace/.gemini/). Ebenfalls soft-fail.
 RUN npm install -g @google/gemini-cli || echo "[WARN] @google/gemini-cli install failed (gemini CLI nicht verfuegbar)"
 
-# Senity Theme (zentrale Farb-Konfiguration) ins Image kopieren
+# Senity Theme (zentrale Farb-Konfiguration) ins Image kopieren.
+# CRLF defensiv strippen, falls die Datei auf einem Host mit core.autocrlf=true
+# ausgecheckt wurde (bash wuerde sonst an "$'\r': command not found" sterben).
 COPY senity-theme.conf /etc/senity-theme.conf
+RUN sed -i 's/\r$//' /etc/senity-theme.conf
 
 # Welcome-Box-Strings + Anthropic-Orange auf Senity-Farben patchen
 COPY patch-claude-header.js /tmp/patch-claude-header.js
