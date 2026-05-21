@@ -51,13 +51,15 @@ WS = set(b" \t")
 
 FILTER_SECONDS = 5.0
 
-# Welcome-Box-Title-Rewrite: "Welcome to Claude Code vX.Y" -> "Senity Wksp vX.Y"
+# Welcome-Box-Title-Rewrite: "Welcome to Claude Code vX.Y" -> "Senity Code vX.Y"
 # Der Title wird im claude-Binary aus getrennten V8-Snapshot-Strings komponiert
 # und ist daher nicht statisch byte-patchbar. Wir machen es zur Laufzeit.
+# "Senity Wksp" bleibt in der Alternation, damit aeltere gepatchte Builds
+# weiterhin idempotent erkannt werden.
 TITLE_RE = re.compile(
-    r"Welcome to\s+(?:Claude Code|Senity Wksp)\s+v([0-9A-Za-z][0-9A-Za-z.+\- ]*?)\s*$"
+    r"Welcome to\s+(?:Claude Code|Senity Code|Senity Wksp)\s+v([0-9A-Za-z][0-9A-Za-z.+\- ]*?)\s*$"
 )
-NEW_PRODUCT = "Senity Wksp"
+NEW_PRODUCT = "Senity Code"
 
 # Arc-Box-Title-Rewrite (das ist die tatsaechliche Realitaet im aktuellen Claude
 # Code Binary): Top-Border ist `╭─── Claude Code v1.0 ───╮`. Zeilen-Separator
@@ -66,7 +68,7 @@ NEW_PRODUCT = "Senity Wksp"
 ARC_TL = b"\xe2\x95\xad"  # ╭ U+256D
 ARC_TR = b"\xe2\x95\xae"  # ╮ U+256E
 CLAUDE_CODE = b"Claude Code"
-SENITY_WKSP = b"Senity Wksp"  # gleiche Byte-/Cell-Breite (11), keine Padding-Korrektur noetig
+SENITY_CODE = b"Senity Code"  # gleiche Byte-/Cell-Breite (11), keine Padding-Korrektur noetig
 
 # Nur "Claude Code" treffen, das ZWISCHEN dem Top-Arc-Paar ╭...╮ liegt
 # (Welcome-Box-Titelzeile). Lookahead stellt sicher, dass nach Claude Code
@@ -87,17 +89,17 @@ OSC_TITLE_RE = re.compile(
 
 def rewrite_titles_in_chunk(chunk: bytes) -> bytes:
     """
-    Ersetzt "Claude Code" -> "Senity Wksp" in zwei eng definierten Kontexten:
+    Ersetzt "Claude Code" -> "Senity Code" in zwei eng definierten Kontexten:
       1. Welcome-Box-Top-Border (Bereich zwischen ╭ und ╮)
       2. OSC-Window-Title (ESC ] 0 ; ... BEL)
     Andere Vorkommen ("Claude Code'll be able..." im Trust-Dialog, "Check the
     Claude Code changelog" im Tipp-Bereich der Welcome-Box) bleiben erhalten.
     """
     if ARC_TL in chunk and CLAUDE_CODE in chunk:
-        chunk = ARC_TITLE_RE.sub(lambda m: m.group(1) + SENITY_WKSP, chunk)
+        chunk = ARC_TITLE_RE.sub(lambda m: m.group(1) + SENITY_CODE, chunk)
     if b"\x1b]0;" in chunk:
         chunk = OSC_TITLE_RE.sub(
-            lambda m: m.group(1) + SENITY_WKSP + m.group(2), chunk
+            lambda m: m.group(1) + SENITY_CODE + m.group(2), chunk
         )
     return chunk
 
@@ -132,7 +134,7 @@ def strip_ansi(raw: bytes) -> bytes:
 def try_rewrite_title(raw_line: bytes):
     """
     Wenn raw_line die Welcome-Box-Title-Zeile ist, ersetze den Inhalt zwischen
-    den Box-Edges durch "<star> Senity Wksp v<version>" und behalte die
+    den Box-Edges durch "<star> Senity Code v<version>" und behalte die
     sichtbare Innenbreite. Liefert die neue Zeile zurueck oder None bei No-Match.
     """
     raw_first = raw_line.find(BOX_V)

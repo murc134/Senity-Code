@@ -154,9 +154,13 @@ function Test-SenityKey {
 
 # ── Banner (ALLERERSTE Ausgabe) ──
 Write-Host ""
-Write-Host "  ╔══════════════════════════════════════════╗" -ForegroundColor Magenta
-Write-Host "  ║   Senity Workspace  —  Claude Code CLI   ║" -ForegroundColor Magenta
-Write-Host "  ╚══════════════════════════════════════════╝" -ForegroundColor Magenta
+$esc = [char]27
+Write-Host "   $esc[38;2;135;95;175m███████╗███████╗███╗   ██╗██╗████████╗██╗   ██╗$esc[0m"
+Write-Host "   $esc[38;2;157;111;200m██╔════╝██╔════╝████╗  ██║██║╚══██╔══╝╚██╗ ██╔╝$esc[0m"
+Write-Host "   $esc[38;2;175;135;255m███████╗█████╗  ██╔██╗ ██║██║   ██║    ╚████╔╝ $esc[0m"
+Write-Host "   $esc[38;2;201;95;210m╚════██║██╔══╝  ██║╚██╗██║██║   ██║     ╚██╔╝  $esc[0m"
+Write-Host "   $esc[38;2;230;46;190m███████║███████╗██║ ╚████║██║   ██║      ██║   $esc[38;2;255;0;175m●$esc[0m"
+Write-Host "   $esc[38;2;255;0;175m╚══════╝╚══════╝╚═╝  ╚═══╝╚═╝   ╚═╝      ╚═╝   $esc[0m"
 Write-Host ""
 Write-DBG "ScriptDir  : $ScriptDir"
 Write-DBG "PowerShell : $($PSVersionTable.PSVersion)"

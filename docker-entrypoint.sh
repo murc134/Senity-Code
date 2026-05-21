@@ -159,7 +159,7 @@ if [[ -t 1 && -z "${SENITY_NO_BANNER:-}" ]]; then
         printf '%s%s\n' "$out" "$R"
     done
     printf '\n'
-    printf '%s   Senity Workspace  --  Claude Code CLI%s\n' "$FACE" "$R"
+    printf '%s   Senity Workspace  --  Senity Code CLI%s\n' "$FACE" "$R"
     printf '%s   Provider: Senity Chat Proxy%s\n'           "$NODE_PURP" "$R"
     printf '\n'
 fi
