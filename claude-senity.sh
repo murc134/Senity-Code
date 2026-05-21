@@ -425,10 +425,43 @@ MANAGED_BIND_END="# <<< SENITY-VERWALTET <<<"
 clone_managed_repo() {
     local url="$1" dir="$2" kf="$3"
     local ssh_cmd="ssh -o StrictHostKeyChecking=accept-new"
-    [[ -f "$kf" ]] && ssh_cmd="ssh -i ${kf} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+    [[ -f "$kf" ]] && ssh_cmd="ssh -i \"${kf}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
     mkdir -p "$(dirname "$dir")"
     GIT_SSH_COMMAND="$ssh_cmd" git clone --quiet --branch main "$url" "$dir" 2>/dev/null && return 0
     git clone --quiet --branch main "$url" "$dir" 2>/dev/null
+}
+
+# ── Sicherstellen, dass git auf dem Host vorhanden ist ──
+# Das Repo-Setup laeuft auf dem HOST (vor dem Container-Start) und braucht git.
+# (Im Container ist git ohnehin im Image — das hier betrifft nur den Host.)
+ensure_git() {
+    command -v git &>/dev/null && return 0
+    write_warn "git nicht gefunden — Installationsversuch..."
+    if [[ "$(uname)" == "Darwin" ]]; then
+        if command -v brew &>/dev/null; then
+            brew install git || true
+        else
+            write_info "Starte Xcode Command Line Tools (enthalten git)..."
+            xcode-select --install 2>/dev/null || true
+            write_warn "GUI-Installation abschliessen, dann Launcher neu starten."
+        fi
+    elif command -v apt-get &>/dev/null; then
+        sudo apt-get update -qq || true; sudo apt-get install -y git || true
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y git || true
+    elif command -v pacman &>/dev/null; then
+        sudo pacman -S --noconfirm git || true
+    elif command -v zypper &>/dev/null; then
+        sudo zypper install -y git || true
+    else
+        write_warn "Kein bekannter Paketmanager — git bitte manuell installieren."
+    fi
+    if command -v git &>/dev/null; then
+        write_ok "git installiert: $(command -v git)"
+        return 0
+    fi
+    write_warn "git weiterhin nicht verfuegbar — Repo-Setup wird uebersprungen."
+    return 1
 }
 
 # ── Repo-Setup: Deploy-Keys dekodieren, Repos klonen/pullen ──
@@ -441,15 +474,20 @@ setup_repos() {
     local key_dir="${SCRIPT_DIR}/.deploy-keys"
 
     # 1) Deploy-Keys aus .env.shared nach .deploy-keys/ dekodieren (chmod 600).
-    if [[ -f "$shared_env" ]] && command -v openssl &>/dev/null; then
+    # base64-Decoder: bevorzugt openssl, sonst das base64-Tool.
+    local b64_decode=""
+    if command -v openssl &>/dev/null; then b64_decode="openssl base64 -d -A"
+    elif command -v base64 &>/dev/null; then b64_decode="base64 --decode"; fi
+    if [[ -f "$shared_env" && -n "$b64_decode" ]]; then
+        chmod 600 "$shared_env" 2>/dev/null || true
         mkdir -p "$key_dir"; chmod 700 "$key_dir" 2>/dev/null || true
         while IFS= read -r line || [[ -n "$line" ]]; do
-            line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            line="$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
             [[ -z "$line" || "$line" == \#* ]] && continue
             if [[ "$line" =~ ^([A-Za-z0-9_-]+)_B64=(.+)$ ]]; then
                 local kn="${BASH_REMATCH[1]}"
                 local kf="${key_dir}/${kn}"
-                if echo "${BASH_REMATCH[2]}" | openssl base64 -d -A > "$kf" 2>/dev/null && [[ -s "$kf" ]]; then
+                if printf '%s' "${BASH_REMATCH[2]}" | $b64_decode > "$kf" 2>/dev/null && [[ -s "$kf" ]]; then
                     chmod 600 "$kf" 2>/dev/null || true
                 else
                     write_warn "Deploy-Key '$kn' nicht dekodierbar — uebersprungen."
@@ -457,6 +495,8 @@ setup_repos() {
                 fi
             fi
         done < "$shared_env"
+    elif [[ -f "$shared_env" ]]; then
+        write_warn "Weder openssl noch base64 gefunden — Deploy-Keys uebersprungen, ~/.ssh-Fallback aktiv."
     fi
 
     # 2) Repos klonen / pullen (je nach MODE).
@@ -473,18 +513,25 @@ setup_repos() {
         if [[ "$mode" == "pull" && -d "${dir}/.git" ]]; then
             write_info "Repo aktualisieren (pull): ${rel}"
             local ssh_cmd="ssh -o StrictHostKeyChecking=accept-new"
-            [[ -f "$kf" ]] && ssh_cmd="ssh -i ${kf} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+            [[ -f "$kf" ]] && ssh_cmd="ssh -i \"${kf}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
             if ! GIT_SSH_COMMAND="$ssh_cmd" git -C "$dir" pull --ff-only --quiet 2>/dev/null \
                && ! git -C "$dir" pull --ff-only --quiet 2>/dev/null; then
                 write_warn "Pull fehlgeschlagen (${rel}) — vorhandener Stand wird genutzt."
             fi
-        else
-            if [[ "$mode" == "fresh" ]]; then
-                write_info "Repo frisch klonen: ${rel}"
-                rm -rf "$dir"
+        elif [[ "$mode" == "fresh" ]]; then
+            # Frisch klonen: erst in ein Temp-Verzeichnis, dann atomar tauschen —
+            # so bleibt der vorherige Stand bei fehlgeschlagenem Clone erhalten.
+            write_info "Repo frisch klonen: ${rel}"
+            local tmp="${dir}.tmp.$$"
+            rm -rf "$tmp"
+            if clone_managed_repo "$url" "$tmp" "$kf"; then
+                rm -rf "$dir" && mv "$tmp" "$dir"
             else
-                write_info "Repo klonen: ${rel}"
+                rm -rf "$tmp"
+                write_warn "Klonen fehlgeschlagen (${url}) — vorhandener Stand bleibt erhalten."
             fi
+        else
+            write_info "Repo klonen: ${rel}"
             if ! clone_managed_repo "$url" "$dir" "$kf"; then
                 write_warn "Klonen fehlgeschlagen (${url}) — Deploy-Key evtl. nicht registriert, kein ~/.ssh-Zugang."
             fi
@@ -506,8 +553,10 @@ update_managed_bindings() {
     local bf="$1"
     [[ -f "$bf" ]] || return 0
     local kept
+    # CR-tolerant: Marker auch erkennen, wenn Bindings.md CRLF-Zeilenenden hat.
     kept="$(awk -v b="$MANAGED_BIND_BEGIN" -v e="$MANAGED_BIND_END" '
-        $0==b {skip=1} !skip {print} $0==e {skip=0}' "$bf")"
+        { l=$0; sub(/\r$/,"",l) }
+        l==b {skip=1} !skip {print} l==e {skip=0}' "$bf")"
     {
         printf '%s\n\n' "$kept"
         echo "$MANAGED_BIND_BEGIN"
@@ -531,6 +580,7 @@ update_managed_bindings() {
 # ══════════════════════════════════════════════════════════════
 write_sep
 write_info "[4/6] Repo-Setup (verwaltete Repos)..."
+ensure_git || true
 setup_repos
 
 # ══════════════════════════════════════════════════════════════
@@ -693,7 +743,11 @@ fi
 # wird er Claude Code via --append-system-prompt mitgegeben.
 sys_prompt_file="${SCRIPT_DIR}/SYSTEM_PROMPT.md"
 if [[ -f "$sys_prompt_file" ]]; then
-    sys_prompt_content="$(sed '/<!--/,/-->/d' "$sys_prompt_file")"
+    if command -v perl &>/dev/null; then
+        sys_prompt_content="$(perl -0777 -pe 's/<!--.*?-->//gs' "$sys_prompt_file")"
+    else
+        sys_prompt_content="$(sed '/<!--/,/-->/d' "$sys_prompt_file")"
+    fi
     if [[ -n "$(echo "$sys_prompt_content" | tr -d '[:space:]')" ]]; then
         CLAUDE_ARGS+=("--append-system-prompt" "$sys_prompt_content")
         write_ok "System-Prompt aus SYSTEM_PROMPT.md geladen"

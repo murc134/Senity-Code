@@ -9,3 +9,7 @@ docker-entrypoint.sh text eol=lf
 
 # Alle anderen: Git entscheidet
 *       text=auto
+
+# Bindings.md wird vom Launcher geschrieben/geparst — LF erzwingen
+# (CRLF wuerde die Marker-Erkennung im awk-Parser brechen).
+Bindings.md text eol=lf

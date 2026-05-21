@@ -10,6 +10,10 @@ Einziger Provider: **Senity Chat Proxy**.
   - macOS: `brew install --cask docker`
   - Linux: https://docs.docker.com/engine/install/
 - **Windows zusaetzlich:** PowerShell 7 (`pwsh`). Der `.bat`-Launcher installiert es bei Bedarf automatisch via winget.
+- **git** wird auf dem Host gebraucht (das Repo-Setup klont/pullt vor dem
+  Container-Start). Fehlt es, installiert der Launcher es automatisch —
+  winget (Windows), Homebrew/Xcode CLT (macOS), apt/dnf/pacman/zypper (Linux).
+  `ssh`/`curl` bringt jedes unterstuetzte Betriebssystem bereits mit.
 
 ## Schnellstart
 

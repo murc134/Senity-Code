@@ -75,8 +75,8 @@ exit /b 1
 :found_pwsh
 echo   [OK]   PowerShell 7: %PWSH_BIN%
 
-rem ── [2/3] Docker-CLI pruefen ────────────────────────────────
-echo   [2/3] Docker-CLI pruefen...
+rem ── [2/4] Docker-CLI pruefen ────────────────────────────────
+echo   [2/4] Docker-CLI pruefen...
 where docker >nul 2>&1
 if !ERRORLEVEL! EQU 0 (
     for /f "usebackq tokens=*" %%v in (`docker --version 2^>^&1`) do (
@@ -86,8 +86,25 @@ if !ERRORLEVEL! EQU 0 (
     echo   [WARN] Docker nicht im PATH (bitte Docker Desktop installieren: winget install Docker.DockerDesktop)
 )
 
-rem ── [3/3] PowerShell-Script starten ────────────────────────
-echo   [3/3] Starte claude-senity.ps1...
+rem ── [3/4] git pruefen (das Repo-Setup im Launcher braucht git) ──
+echo   [3/4] git pruefen...
+where git >nul 2>&1
+if !ERRORLEVEL! EQU 0 (
+    for /f "usebackq tokens=*" %%g in (`git --version 2^>^&1`) do (
+        echo   [OK]   %%g
+    )
+) else (
+    echo   [WARN] git nicht gefunden. Installationsversuch via winget...
+    where winget >nul 2>&1
+    if !ERRORLEVEL! EQU 0 (
+        winget install --id Git.Git -e --silent --accept-source-agreements --accept-package-agreements
+    ) else (
+        echo   [WARN] winget nicht verfuegbar - git manuell installieren: https://git-scm.com/download/win
+    )
+)
+
+rem ── [4/4] PowerShell-Script starten ────────────────────────
+echo   [4/4] Starte claude-senity.ps1...
 echo.
 
 rem Stderr mit in Stdout leiten, damit Fehler sichtbar sind

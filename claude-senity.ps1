@@ -514,6 +514,30 @@ function Update-ManagedBindings {
     Set-Content -Path $Path -Value ($kept + @('') + $block) -Encoding UTF8
 }
 
+# Stellt sicher, dass git auf dem Host vorhanden ist (Repo-Setup braucht es;
+# im Container ist git ohnehin im Image).
+function Ensure-Git {
+    if (Get-Command git -ErrorAction SilentlyContinue) { return $true }
+    Write-WARN "git nicht gefunden — Installationsversuch via winget..."
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        winget install --id Git.Git -e --silent --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
+        # PATH aus der Registry neu laden + Git-Standardpfade explizit anhaengen
+        # (winget kehrt teils zurueck, bevor der Registry-PATH geschrieben ist).
+        $env:Path = (@(
+            [System.Environment]::GetEnvironmentVariable('Path','Machine'),
+            [System.Environment]::GetEnvironmentVariable('Path','User'),
+            "$env:ProgramFiles\Git\cmd",
+            "$env:LOCALAPPDATA\Programs\Git\cmd"
+        ) | Where-Object { $_ }) -join ';'
+    } else {
+        Write-WARN "winget nicht verfuegbar — git manuell installieren: https://git-scm.com/download/win"
+    }
+    if (Get-Command git -ErrorAction SilentlyContinue) { Write-OK "git installiert"; return $true }
+    Write-WARN "git weiterhin nicht verfuegbar — Repo-Setup wird uebersprungen."
+    return $false
+}
+
+$null = Ensure-Git
 $gitBin = Get-Command git -ErrorAction SilentlyContinue
 if (-not $gitBin) {
     Write-WARN "git nicht gefunden — Repo-Setup uebersprungen."
@@ -560,28 +584,38 @@ if (-not $gitBin) {
             }
             $env:GIT_SSH_COMMAND = $null
         } else {
+            # fresh: erst in ein Temp-Verzeichnis klonen, dann atomar tauschen —
+            # so bleibt der vorherige Stand bei fehlgeschlagenem Clone erhalten.
+            $cloneTarget = $dir
             if ($repo.Mode -eq 'fresh') {
                 Write-INFO "Repo frisch klonen: $($repo.Dir)"
-                if (Test-Path $dir) { Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue }
+                $cloneTarget = "$dir.tmp.$PID"
+                if (Test-Path $cloneTarget) { Remove-Item $cloneTarget -Recurse -Force -ErrorAction SilentlyContinue }
             } else {
                 Write-INFO "Repo klonen: $($repo.Dir)"
             }
-            $parent = Split-Path -Parent $dir
+            $parent = Split-Path -Parent $cloneTarget
             if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
             $cloned = $false
             if ($hasKey) {
                 $env:GIT_SSH_COMMAND = "ssh -i `"$kf`" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-                git clone --quiet --branch main $repo.Url $dir 2>&1 | Out-Null
+                git clone --quiet --branch main $repo.Url $cloneTarget 2>&1 | Out-Null
                 if ($LASTEXITCODE -eq 0) { $cloned = $true }
             }
             if (-not $cloned) {
                 $env:GIT_SSH_COMMAND = "ssh -o StrictHostKeyChecking=accept-new"
-                git clone --quiet --branch main $repo.Url $dir 2>&1 | Out-Null
+                git clone --quiet --branch main $repo.Url $cloneTarget 2>&1 | Out-Null
                 if ($LASTEXITCODE -eq 0) { $cloned = $true }
             }
             $env:GIT_SSH_COMMAND = $null
-            if (-not $cloned) {
-                Write-WARN "Klonen fehlgeschlagen ($($repo.Url))."
+            if ($cloned) {
+                if ($cloneTarget -ne $dir) {
+                    if (Test-Path $dir) { Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue }
+                    Move-Item $cloneTarget $dir -Force
+                }
+            } else {
+                if ($cloneTarget -ne $dir -and (Test-Path $cloneTarget)) { Remove-Item $cloneTarget -Recurse -Force -ErrorAction SilentlyContinue }
+                Write-WARN "Klonen fehlgeschlagen ($($repo.Url)) — vorhandener Stand bleibt erhalten."
                 Write-WARN "Deploy-Key evtl. nicht registriert und kein ~/.ssh-Zugang."
             }
         }

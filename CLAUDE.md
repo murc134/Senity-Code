@@ -84,3 +84,7 @@ Rest via `--append-system-prompt` an Claude Code übergeben. Dynamisch —
 - **`murc134/*`-Deploy-Keys** müssen von `murc134` eingetragen werden, der
   `senity-workspace`-Key in GitLab (`git.senity.ai`) — bis dahin greift der
   `~/.ssh`-Fallback.
+- **Host-Abhängigkeiten:** Das Repo-Setup läuft auf dem Host und braucht dort
+  `git` — der Launcher (`ensure_git` / `Ensure-Git`) installiert es bei Bedarf
+  automatisch (winget / Homebrew·Xcode CLT / apt·dnf·pacman·zypper). `npm`/`npx`
+  braucht nur der Container (im Image), nicht der Host.
