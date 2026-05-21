@@ -387,6 +387,20 @@ def _spawn_filtered(argv):
     except Exception:
         pass
 
+    # SIGTERM/SIGINT an Child weiterleiten (PID 1 im Container).
+    # Ohne dies sendet Docker SIGTERM an uns, aber claude bekommt nichts
+    # und wird nach 10s hart per SIGKILL getoetet.
+    def _forward_signal(sig, _frame):
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            pass
+    for _sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(_sig, _forward_signal)
+        except Exception:
+            pass
+
     stdin_fd = sys.stdin.fileno()
     stdout_fd = sys.stdout.fileno()
     # Raw-Mode auf den OUTER-Slave (= unser stdin) setzen. Sonst wandelt die

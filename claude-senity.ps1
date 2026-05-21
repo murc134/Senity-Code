@@ -309,6 +309,10 @@ while (-not $keyOk) {
     $result = Test-SenityKey -Url $baseUrl -Key $token
     if ($result.valid) {
         Write-OK "Key valide ($($result.reason))"
+        if ($baseUrl -match '^http://' -and $baseUrl -notmatch '^http://(localhost|127\.)') {
+            Write-WARN "Proxy-URL nutzt HTTP (unverschluesselt). API-Key wird im Klartext uebertragen!"
+            Write-INFO "Empfehlung: HTTPS-Endpunkt verwenden."
+        }
         $keyOk = $true
 
         if ($shouldPersist) {
@@ -494,22 +498,28 @@ $dockerArgs = @(
 $bindingsFile = Join-Path $ScriptDir "Bindings.md"
 if (-not (Test-Path $bindingsFile)) {
     $defaultBindings = @"
-# Senity Workspace - Mount-Pfade
+# Senity Workspace — Mount-Pfade
 # Format: <host-pfad>=<container-pfad>
 # Kommentare beginnen mit #, leere Zeilen werden ignoriert
-# Container-Pfad muss /workspace/<sub> sein (z.B. /workspace/mein-projekt)
+#
+# Host-Pfad:      beliebiges Verzeichnis — absolut (C:\Users\...), per ~ (~/projekte/foo)
+#                 oder relativ zum Projektverzeichnis (../mein-projekt).
+# Container-Pfad: muss unterhalb von /workspace/ liegen (z.B. /workspace/mein-repo).
+#                 /workspace selbst und /workspace/.claude sind reserviert.
 
-./workspace=/workspace
+# Beispiele:
+# ~/projekte/mein-repo=/workspace/mein-repo
+# C:\Users\ich\code\api=/workspace/api
+# ../nachbar-projekt=/workspace/nachbar
 "@
     Set-Content -Path $bindingsFile -Value $defaultBindings -Encoding UTF8
-    Write-OK "Bindings.md angelegt (Default: ./workspace=/workspace)"
+    Write-OK "Bindings.md angelegt (workspace/ ist bereits eingebunden — eigene Pfade ergaenzen)"
 }
 
 Write-INFO "Bindings.md wird ausgewertet..."
-$bindCount     = 0
-$scriptDirFull = [System.IO.Path]::GetFullPath($ScriptDir)
-$sep           = [System.IO.Path]::DirectorySeparatorChar
-$blockedCPaths = @('/workspace', '/workspace/.claude')
+$bindCount      = 0
+# Reservierte Container-Mountziele: kollidieren mit den eingebauten Mounts
+$reservedCPaths = @('/workspace', '/workspace/.claude')
 Get-Content $bindingsFile -Encoding UTF8 | ForEach-Object {
     $line = $_.Trim()
     if ($line -eq '' -or $line -match '^#') { return }
@@ -517,17 +527,24 @@ Get-Content $bindingsFile -Encoding UTF8 | ForEach-Object {
         $hostPart      = $Matches[1]
         $containerPart = $Matches[2]
 
-        if ($containerPart -in $blockedCPaths -or -not $containerPart.StartsWith('/workspace/')) {
-            Write-WARN "Binding '$line' uebersprungen: '$containerPart' nicht erlaubt (muss /workspace/<sub> sein)"
+        # Container-Pfad muss unterhalb von /workspace/ liegen; /workspace und
+        # /workspace/.claude sind reserviert (eingebaute Mounts).
+        if ($containerPart -in $reservedCPaths -or $containerPart -notmatch '^/workspace/.+') {
+            Write-WARN "Binding '$line' uebersprungen: '$containerPart' nicht erlaubt (muss /workspace/<sub> sein, nicht /workspace oder /workspace/.claude)"
             return
         }
 
         try {
-            $canonicalized = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir $hostPart))
-            $inProject     = $canonicalized.StartsWith($scriptDirFull + $sep) -or ($canonicalized -eq $scriptDirFull)
-            if (-not $inProject) {
-                Write-WARN "Binding '$line' uebersprungen: Host-Pfad ausserhalb des Projektverzeichnisses"
-                return
+            # ~ expandieren; absolute Pfade direkt, relative relativ zum Projektverzeichnis
+            if ($hostPart -eq '~') {
+                $hostPart = $HOME
+            } elseif ($hostPart.StartsWith('~/') -or $hostPart.StartsWith('~\')) {
+                $hostPart = Join-Path $HOME $hostPart.Substring(2)
+            }
+            if ([System.IO.Path]::IsPathRooted($hostPart)) {
+                $canonicalized = [System.IO.Path]::GetFullPath($hostPart)
+            } else {
+                $canonicalized = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir $hostPart))
             }
         } catch {
             Write-WARN "Binding '$line' uebersprungen: Pfad nicht aufloesbar"

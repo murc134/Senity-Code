@@ -8,6 +8,35 @@ if [[ ! -d "${HOME}/.claude" ]]; then
     mkdir -p "${HOME}/.claude" 2>/dev/null || true
 fi
 
+# ── Onboarding-/Login-Screen unterdruecken ──
+# Claude Code zeigt die Login-Auswahl ("Select login method"), solange
+# ~/.claude.json kein hasCompletedOnboarding:true enthaelt. Da der Provider
+# fest der Senity Chat Proxy ist, wird Onboarding einmalig als abgeschlossen
+# markiert. Zusaetzlich wird customApiKeyResponses.rejected geleert: Claude
+# Code behandelt einen via ANTHROPIC_API_KEY gesetzten Key als "custom API
+# key" mit Approve/Reject — ein einmal abgelehnter Key wuerde sonst dauerhaft
+# zum Login-Screen fuehren.
+# Zusaetzlich wird das Theme bei jedem Start auf "senity" gesetzt — so ist das
+# Senity-Theme immer der Default (das Bundle bringt "senity" als auswaehlbares
+# Theme mit, siehe patch-claude-header.js / themeStructureReplacements).
+CLAUDE_JSON="${HOME}/.claude.json"
+if command -v jq >/dev/null 2>&1; then
+    if [[ -f "$CLAUDE_JSON" ]]; then
+        tmp_json="$(mktemp)"
+        if jq '.hasCompletedOnboarding = true
+               | .theme = "senity"
+               | if has("customApiKeyResponses")
+                 then .customApiKeyResponses.rejected = []
+                 else . end' \
+              "$CLAUDE_JSON" > "$tmp_json" 2>/dev/null; then
+            cat "$tmp_json" > "$CLAUDE_JSON"
+        fi
+        rm -f "$tmp_json"
+    else
+        printf '{"hasCompletedOnboarding":true,"theme":"senity"}\n' > "$CLAUDE_JSON"
+    fi
+fi
+
 # ── Senity Theme laden (zentrale Farb-Konfiguration) ──
 # Defaults, falls Theme-File fehlt
 PRIMARY_256=99

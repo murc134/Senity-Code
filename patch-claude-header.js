@@ -127,19 +127,92 @@ const colorReplacements = [
     ['38;2;255;135;95',  `38;2;${SR}`],
 ];
 
+// ─── Theme-Struktur: echtes auswaehlbares "Senity" Theme ────────
+// Registriert "senity" als vollwertiges, im /theme-Picker waehlbares Theme.
+// Drei strukturelle Eingriffe ins Bundle (cli.js):
+//   1. "senity" in die Liste gueltiger Theme-Werte (GS1)
+//   2. Eintrag in die Theme-Picker-Optionen
+//   3. Resolver-Switch: vollstaendiges Senity-Theme (Dark-Basis + 45 Tokens)
+// Das Theme wird zusaetzlich von docker-entrypoint.sh als aktives Theme
+// gesetzt, damit es bei jedem Container-Start der Default ist.
+// ACHTUNG: haengt an minifizierten Variablennamen (GS1/_N_/AN_). Bei einem
+// Claude-Code-Update koennen diese sich aendern; dann greifen die Patches
+// nicht mehr (kein Crash — "Senity" erscheint dann nur nicht im Picker).
+// Wird ausschliesslich auf Text-Dateien angewendet, nie auf Binaries.
+const SENITY_THEME_TOKENS = [
+    'claude:"rgb(255,162,56)"',
+    'claudeShimmer:"rgb(255,182,56)"',
+    'briefLabelClaude:"rgb(255,148,112)"',
+    'text:"rgb(255,255,255)"',
+    'inverseText:"rgb(0,0,0)"',
+    'inactive:"rgb(199,199,199)"',
+    'inactiveShimmer:"rgb(207,207,207)"',
+    'subtle:"rgb(128,128,128)"',
+    'promptBorder:"rgb(255,165,92)"',
+    'promptBorderShimmer:"rgb(255,210,87)"',
+    'bashBorder:"rgb(233,80,15)"',
+    'permission:"rgb(255,215,158)"',
+    'permissionShimmer:"rgb(255,247,209)"',
+    'claudeBlue_FOR_SYSTEM_SPINNER:"rgb(255,200,148)"',
+    'claudeBlueShimmer_FOR_SYSTEM_SPINNER:"rgb(255,229,199)"',
+    'suggestion:"rgb(249,220,179)"',
+    'remember:"rgb(249,204,179)"',
+    'briefLabelYou:"rgb(235,192,36)"',
+    'success:"rgb(255,213,0)"',
+    'error:"rgb(255,87,87)"',
+    'warning:"rgb(255,138,5)"',
+    'warningShimmer:"rgb(255,223,57)"',
+    'merged:"rgb(255,255,255)"',
+    'autoAccept:"rgb(255,255,255)"',
+    'diffAdded:"rgb(255,184,61)"',
+    'diffRemoved:"rgb(255,194,194)"',
+    'diffAddedDimmed:"rgb(0,31,6)"',
+    'diffRemovedDimmed:"rgb(56,0,8)"',
+    'diffAddedWord:"rgb(255,234,158)"',
+    'diffRemovedWord:"rgb(255,148,169)"',
+    'planMode:"rgb(255,149,0)"',
+    'fastMode:"rgb(255,106,0)"',
+    'fastModeShimmer:"rgb(255,150,50)"',
+    'ide:"rgb(255,210,46)"',
+    'background:"rgb(255,179,128)"',
+    'rate_limit_fill:"rgb(247,187,85)"',
+    'rate_limit_empty:"rgb(117,47,0)"',
+    'professionalBlue:"rgb(255,124,92)"',
+    'chromeYellow:"rgb(251,188,4)"',
+    'rainbow_red:"rgb(235,95,87)"',
+    'rainbow_orange:"rgb(245,139,87)"',
+    'rainbow_yellow:"rgb(250,195,95)"',
+    'rainbow_green:"rgb(145,200,130)"',
+    'rainbow_blue:"rgb(130,170,220)"',
+    'rainbow_indigo:"rgb(155,130,200)"',
+    'rainbow_violet:"rgb(200,130,180)"',
+].join(',');
+const themeStructureReplacements = [
+    // 1. "senity" als gueltigen Theme-Wert registrieren
+    ['GS1=["dark","light","light-daltonized","dark-daltonized","light-ansi","dark-ansi"]',
+     'GS1=["dark","light","light-daltonized","dark-daltonized","light-ansi","dark-ansi","senity"]'],
+    // 2. Eintrag im Theme-Picker (alle Vorkommen)
+    ['{label:"Light mode (ANSI colors only)",value:"light-ansi"}]',
+     '{label:"Light mode (ANSI colors only)",value:"light-ansi"},{label:"Senity",value:"senity"}]'],
+    // 3. Resolver-Switch: Senity = Dark-Basis (...AN_) + 45 Senity-Tokens
+    ['switch(q){case"light":return _N_;',
+     `switch(q){case"senity":return{...AN_,${SENITY_THEME_TOKENS}};case"light":return _N_;`],
+];
+let themeStructHits = 0;
+
 // ─── npm root finden ────────────────────────────────────────────
 let root;
 try {
     root = execSync('npm root -g', { encoding: 'utf8' }).trim();
 } catch (e) {
     console.error('[patch] npm root -g fehlgeschlagen:', e.message);
-    process.exit(0);
+    process.exit(1);
 }
 
 const pkgDir = path.join(root, '@anthropic-ai', 'claude-code');
 if (!fs.existsSync(pkgDir)) {
     console.error('[patch] claude-code Package nicht gefunden unter', pkgDir);
-    process.exit(0);
+    process.exit(1);
 }
 
 // ─── File-Sammlung ──────────────────────────────────────────────
@@ -187,6 +260,15 @@ function patchTextFile(file) {
         const parts = content.split(from);
         content = parts.join(to);
         colorHits += parts.length - 1;
+    }
+    // Theme-Struktur zuletzt: injizierte rgb()-Literale duerfen nicht mehr
+    // von colorReplacements erfasst werden.
+    for (const [from, to] of themeStructureReplacements) {
+        if (!content.includes(from)) continue;
+        const parts = content.split(from);
+        content = parts.join(to);
+        themeStructHits += parts.length - 1;
+        textHits += parts.length - 1;
     }
     if (textHits + colorHits > 0) fs.writeFileSync(file, content);
     return [textHits, colorHits];
@@ -280,4 +362,10 @@ for (const file of files) {
 console.log(`[patch] Gesamt: text=${totalText}, color=${totalColor} in ${touchedFiles} Datei(en)`);
 if (totalText === 0 && totalColor === 0) {
     console.warn('[patch] WARN: keine Treffer. CLI evtl. veraendert (Update?).');
+}
+if (themeStructHits >= themeStructureReplacements.length) {
+    console.log('[patch] Senity-Theme als auswaehlbares Theme verankert (3/3 Struktur-Patches).');
+} else {
+    console.warn(`[patch] WARN: Senity-Theme nur teilweise verankert (${themeStructHits}/${themeStructureReplacements.length}). `
+        + 'Bundle evtl. aktualisiert — "Senity" erscheint dann nicht im /theme-Picker.');
 }
