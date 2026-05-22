@@ -179,6 +179,36 @@ function Test-ModernWSL {
     }
 }
 
+# Aktiviert die zwei Windows-Optional-Features, die WSL2 zwingend braucht:
+# 'Microsoft-Windows-Subsystem-Linux' + 'VirtualMachinePlatform'. Auf
+# Windows 10 19045 ist 'wsl --install --no-distribution' bekanntermassen
+# kaputt und schaltet diese Features nicht ein — der Store-WSL-Client
+# laeuft dann zwar, aber Docker Desktop kommt nicht hoch.
+#
+# dism.exe ist idempotent: wenn ein Feature bereits aktiv ist, gibt der
+# Befehl Exit 0 zurueck und macht nichts. Beide Calls laufen in einem
+# einzigen elevated cmd, damit nur ein UAC-Prompt erscheint.
+# Rueckgabe: $true wenn dism erfolgreich war (auch bei No-Op).
+function Enable-WslFeatures {
+    Write-INFO "Aktiviere Windows-Features fuer WSL2 (Microsoft-Windows-Subsystem-Linux + VirtualMachinePlatform)..."
+    Write-INFO "Ein UAC-Prompt erscheint. dism.exe laeuft elevated; ein Reboot ist danach noetig."
+    $dismCmd = 'dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart && dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart'
+    try {
+        $proc = Start-Process -FilePath "cmd.exe" `
+            -ArgumentList "/c", $dismCmd `
+            -Verb RunAs -Wait -PassThru -ErrorAction Stop
+        if ($proc.ExitCode -eq 0) {
+            Write-OK "WSL-Windows-Features aktiviert (dism /enable-feature)."
+            return $true
+        }
+        Write-WARN "dism /enable-feature fehlgeschlagen (ExitCode $($proc.ExitCode))."
+        return $false
+    } catch {
+        Write-WARN "DISM-Aufruf fehlgeschlagen oder UAC abgelehnt: $($_.Exception.Message)"
+        return $false
+    }
+}
+
 # Installiert/aktualisiert die moderne Store-WSL via winget (Paket
 # Microsoft.WSL). Loest die Inbox-WSL implizit ab. Braucht UAC; winget
 # zeigt den Prompt selbst an. Rueckgabe: $true bei Erfolg.
@@ -206,33 +236,46 @@ function Install-ModernWSL {
     }
 }
 
-# Stellt sicher, dass die moderne Store-WSL2 installiert ist (Docker-Desktop-
-# Voraussetzung). Wenn WSL ganz fehlt ODER nur die alte Inbox-WSL vorhanden
-# ist (kein 'wsl --version'/'--update'), wird Microsoft.WSL per winget
-# nachinstalliert. Auf bereits modernen Systemen passiert ohne -UpdateWsl
-# nichts (Auto-Update kann laufende Distros killen).
+# Stellt sicher, dass die moderne Store-WSL2 installiert UND die noetigen
+# Windows-Features aktiviert sind (Docker-Desktop-Voraussetzung). Wenn WSL
+# ganz fehlt ODER nur die alte Inbox-WSL vorhanden ist, schaltet der
+# Launcher zuerst die Optional-Features ('Microsoft-Windows-Subsystem-Linux'
+# + 'VirtualMachinePlatform') per dism.exe ein und installiert anschliessend
+# Microsoft.WSL via winget. Auf bereits modernen Systemen passiert ohne
+# -UpdateWsl nichts (Auto-Update kann laufende Distros killen).
 function Ensure-WSL {
     $wslBin = Get-Command wsl -ErrorAction SilentlyContinue
+    $needsFix = (-not $wslBin) -or (-not (Test-ModernWSL))
 
-    if (-not $wslBin) {
-        Write-WARN "WSL nicht im PATH — installiere moderne WSL via winget."
-        if (Install-ModernWSL) {
-            Write-WARN "WSL wurde installiert. Falls Windows einen Neustart anfordert, bitte rebooten und Launcher erneut aufrufen."
-            return $true
+    if ($needsFix) {
+        if (-not $wslBin) {
+            Write-WARN "WSL nicht im PATH — Windows-Features fehlen oder Store-Client ist nicht installiert."
+        } else {
+            Write-WARN "Veraltete Inbox-WSL erkannt ($($wslBin.Source))."
+            Write-WARN "Diese Version unterstuetzt weder 'wsl --version' noch 'wsl --update' — Docker Desktop wird damit nicht zuverlaessig starten."
         }
-        Write-WARN "WSL-Installation fehlgeschlagen. Docker Desktop benoetigt WSL2."
-        return $false
-    }
 
-    if (-not (Test-ModernWSL)) {
-        Write-WARN "Veraltete Inbox-WSL erkannt ($($wslBin.Source))."
-        Write-WARN "Diese Version unterstuetzt weder 'wsl --version' noch 'wsl --update' — Docker Desktop wird damit nicht zuverlaessig starten."
-        if (Install-ModernWSL) {
-            Write-WARN "Bitte das Terminal komplett schliessen und den Launcher erneut aufrufen, damit das aktualisierte wsl.exe greift."
-            Write-WARN "Falls Windows nach einem Neustart fragt: rebooten und danach erneut starten."
+        # Zwei-Phasen-Fix:
+        # 1) dism.exe schaltet die Optional-Features ein. Notwendig fuer
+        #    Windows 10 19045 (dort schaltet 'wsl --install' die Features
+        #    NICHT ein, bekannter Bug). Idempotent — schadet auf neueren
+        #    Builds nicht, wenn die Features schon aktiv sind.
+        # 2) winget zieht die moderne Store-WSL (Paket Microsoft.WSL),
+        #    loest die Inbox-Variante ab.
+        $featuresOk = Enable-WslFeatures
+        $wingetOk   = Install-ModernWSL
+
+        if ($featuresOk -or $wingetOk) {
+            Write-WARN "WSL-Setup angestossen. Bitte Windows NEU STARTEN und den Launcher danach erneut aufrufen."
+            Write-WARN "Ohne Reboot greift die Feature-Aktivierung nicht und Docker Desktop wird nicht starten."
             exit 0
         }
-        Write-WARN "Upgrade der Inbox-WSL fehlgeschlagen. Bitte manuell: winget install --id Microsoft.WSL -e"
+
+        Write-WARN "WSL-Setup fehlgeschlagen. Manuell als Admin ausfuehren:"
+        Write-WARN "  dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart"
+        Write-WARN "  dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart"
+        Write-WARN "  winget install --id Microsoft.WSL -e"
+        Write-WARN "Danach Windows neu starten."
         return $false
     }
 

@@ -217,10 +217,19 @@ server-seitig gegen den User-Account.
   Auto-Install (Engine-Setup ist distrospezifisch und root-pflichtig), Hinweis
   auf docs.docker.com. Auf Windows läuft vorab `Ensure-WSL`: prüft, ob `wsl`
   vorhanden und **modern** ist. Detection via `wsl --version` (Test-ModernWSL):
-  - Fehlt `wsl.exe` → `winget install --id Microsoft.WSL -e` (UAC).
-  - Inbox-WSL erkannt (Windows-10-19041-Variante in `C:\Windows\System32\wsl.exe`,
-    kennt weder `--version` noch `--update`) → ebenfalls
-    `winget install Microsoft.WSL`, danach `exit 0` mit Hinweis Terminal-Neustart.
+  - Fehlt `wsl.exe` ODER Inbox-WSL erkannt (Windows-10-19041/19045-Variante in
+    `C:\Windows\System32\wsl.exe`, kennt weder `--version` noch `--update`) →
+    Zwei-Phasen-Fix in dieser Reihenfolge:
+    1. **`Enable-WslFeatures`** schaltet per `dism.exe /online /enable-feature`
+       die zwei Optional-Features `Microsoft-Windows-Subsystem-Linux` und
+       `VirtualMachinePlatform` ein (ein UAC-Prompt für beide, via elevated
+       `cmd /c`-Chain). Notwendig auf Windows 10 19045: dort schaltet
+       `wsl --install --no-distribution` die Features bekanntermaßen **nicht**
+       ein. `dism.exe` ist idempotent (No-Op wenn Features schon aktiv).
+    2. **`Install-ModernWSL`** zieht via `winget install --id Microsoft.WSL -e`
+       die moderne Store-WSL und löst die Inbox-Variante implizit ab.
+    Danach `exit 0` mit Hinweis „Windows neu starten und Launcher erneut
+    aufrufen" — ohne Reboot greift die Feature-Aktivierung nicht.
   - Moderne WSL vorhanden → `wsl --update` läuft nur mit `-UpdateWsl`-Flag,
     sonst übersprungen (Auto-Update hat in der Praxis laufende Docker-Distros
     abgeschossen, ERROR_ALREADY_EXISTS beim Re-Import).
