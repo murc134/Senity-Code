@@ -713,7 +713,7 @@ update_managed_bindings() {
     # CR-tolerant: Marker auch erkennen, wenn .bindings CRLF-Zeilenenden hat.
     kept="$(awk -v b="$MANAGED_BIND_BEGIN" -v e="$MANAGED_BIND_END" '
         { l=$0; sub(/\r$/,"",l) }
-        l==b {skip=1} !skip {print} l==e {skip=0}' "$bf")"
+        l==b {skip=1} !skip {print l} l==e {skip=0}' "$bf")"
     {
         printf '%s\n\n' "$kept"
         echo "$MANAGED_BIND_BEGIN"

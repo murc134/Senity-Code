@@ -11,8 +11,8 @@ echo   ║   Senity Workspace  —  Launcher (bat)   ║
 echo   ╚══════════════════════════════════════════╝
 echo.
 
-rem ── [1/3] PowerShell 7 suchen ──────────────────────────────
-echo   [1/3] PowerShell 7 (pwsh) suchen...
+rem ── [1/4] PowerShell 7 suchen ──────────────────────────────
+echo   [1/4] PowerShell 7 (pwsh) suchen...
 
 set "PWSH_BIN="
 
