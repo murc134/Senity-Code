@@ -587,27 +587,36 @@ fi
 # Verwaltete Repos — werden vor dem Container-Start geklont/gepullt.
 # Fest hinterlegt (Teil des Setups, nicht ueber .bindings steuerbar).
 # MODE: fresh = bei jedem Start loeschen + neu klonen; pull = klonen-
-# oder-pullen. senity-workspace ist das Arbeits-Repo -> pull, sonst
-# waere nicht-gepushte Arbeit nach jedem Neustart verloren.
+# oder-pullen.
+# Hinweis: senity-workspace ist KEIN Managed Repo — der Pfad wird
+# interaktiv beim Erst-Start abgefragt (ensure_senity_workspace),
+# damit Nutzer einen bereits vorhandenen lokalen Workspace mounten
+# koennen statt ihn neben den eigenen zu klonen.
 # ══════════════════════════════════════════════════════════════
-MANAGED_REPO_KEYS=( "senity-workspace" "claude-skills" "claude-commands" "claude-agents" )
+MANAGED_REPO_KEYS=( "claude-skills" "claude-commands" "claude-agents" )
 MANAGED_REPO_URLS=(
-    "ssh://git@git.senity.ai:2200/senity/senity-workspace.git"
     "git@github.com:murc134/Claude-Skills.git"
     "git@github.com:murc134/Claude-Commands.git"
     "git@github.com:murc134/Claude-Agents.git"
 )
 MANAGED_REPO_DIRS=(
-    "workspace/projects/senity-workspace"
     "workspace/.claude/skills/intern"
     "workspace/.claude/commands/intern"
     "workspace/.claude/agents/intern"
 )
-MANAGED_REPO_MODES=( "pull" "fresh" "fresh" "fresh" )
+MANAGED_REPO_MODES=( "fresh" "fresh" "fresh" )
 
 # Marker fuer den auto-verwalteten Block in .bindings
 MANAGED_BIND_BEGIN="# >>> SENITY-VERWALTET (auto-generiert vom Repo-Setup) >>>"
 MANAGED_BIND_END="# <<< SENITY-VERWALTET <<<"
+
+# Marker fuer den interaktiv konfigurierten senity-workspace-Block in .bindings.
+# Wird von ensure_senity_workspace() geschrieben (einmalig beim Erst-Start oder
+# bei verlorenem Host-Pfad). Eigene Eintraege ausserhalb der Marker bleiben.
+WORKSPACE_BIND_BEGIN="# >>> SENITY-WORKSPACE (interaktiv konfiguriert) >>>"
+WORKSPACE_BIND_END="# <<< SENITY-WORKSPACE <<<"
+WORKSPACE_CONTAINER_PATH="/workspace/projects/senity-workspace"
+WORKSPACE_REPO_URL="ssh://git@git.senity.ai:2200/senity/senity-workspace.git"
 
 # ── Ein Repo klonen (Deploy-Key bevorzugt, Fallback normaler ~/.ssh) ──
 clone_managed_repo() {
@@ -718,23 +727,148 @@ update_managed_bindings() {
         printf '%s\n\n' "$kept"
         echo "$MANAGED_BIND_BEGIN"
         echo "# Auto-generiert vom Repo-Setup, Aenderungen hier werden bei jedem"
-        echo "# Start ueberschrieben. senity-workspace liegt direkt in workspace/"
-        echo "# und ist dadurch bereits unter /workspace/... sichtbar."
+        echo "# Start ueberschrieben. Enthaelt die Mounts fuer die intern/private"
+        echo "# .claude-Quellen. Der senity-workspace-Mount steht in einem eigenen"
+        echo "# Block (# >>> SENITY-WORKSPACE >>>), interaktiv konfiguriert."
         local sub
         for sub in skills commands agents; do
             [[ -d "${SCRIPT_DIR}/workspace/.claude/${sub}/intern" ]] && \
                 echo "workspace/.claude/${sub}/intern=/workspace/.claude/${sub}/intern:ro"
             echo "workspace/.claude/${sub}/private=/workspace/.claude/${sub}/private:rw"
-            [[ -d "${HOME}/.claude/${sub}" ]] && \
-                echo "~/.claude/${sub}=/workspace/.claude/${sub}/global:rw"
         done
-        # Repo-eigene Skill-Ordner (read-only). senity-workspace und Projekte
-        # liegen unter workspace/projects/<name> und sind via /workspace-Mount
-        # automatisch sichtbar, brauchen also keinen eigenen Eintrag.
+        # Repo-eigener Skill-Ordner (read-only) des claude-local-Launchers.
         [[ -d "${SCRIPT_DIR}/skills" ]] && \
             echo "skills=/workspace/.claude/skills/senity-workspace:ro"
         echo "$MANAGED_BIND_END"
     } > "$bf"
+}
+
+# ══════════════════════════════════════════════════════════════
+# senity-workspace: interaktiver Mount-Setup
+# Liest den Host-Pfad aus dem WORKSPACE-Block in .bindings. Fehlt der
+# Block oder zeigt er auf einen nicht (mehr) existierenden Pfad, wird
+# der Nutzer gefragt: bereits installiert (Pfad eingeben) oder klonen.
+# Beim Pfad-Modus wird NICHT gepullt (User-Verantwortung).
+# ══════════════════════════════════════════════════════════════
+read_workspace_host_from_bindings() {
+    local bf="$1"
+    [[ -f "$bf" ]] || return 0
+    awk -v b="$WORKSPACE_BIND_BEGIN" -v e="$WORKSPACE_BIND_END" \
+        -v cpath="$WORKSPACE_CONTAINER_PATH" '
+        { l=$0; sub(/\r$/,"",l) }
+        l==b { inblk=1; next }
+        l==e { inblk=0; next }
+        inblk==1 {
+            t=l
+            sub(/^[[:space:]]+/,"",t); sub(/[[:space:]]+$/,"",t)
+            if (t=="" || substr(t,1,1)=="#") next
+            n=split(t, a, "=")
+            if (n<2) next
+            host=a[1]
+            cp=a[n]; for (i=n-1;i>=2;i--) cp=a[i] "=" cp
+            sub(/:ro$/,"",cp); sub(/:rw$/,"",cp)
+            if (cp==cpath) { print host; exit }
+        }' "$bf"
+}
+
+resolve_workspace_host() {
+    local p="$1"
+    case "$p" in
+        "~")   printf '%s' "$HOME" ;;
+        "~/"*) printf '%s' "${HOME}/${p#\~/}" ;;
+        /*|[A-Za-z]:[\\/]*) printf '%s' "$p" ;;
+        *)     printf '%s' "${SCRIPT_DIR}/${p}" ;;
+    esac
+}
+
+remove_workspace_block() {
+    local bf="$1"
+    [[ -f "$bf" ]] || return 0
+    local tmp
+    tmp="$(awk -v b="$WORKSPACE_BIND_BEGIN" -v e="$WORKSPACE_BIND_END" '
+        { l=$0; sub(/\r$/,"",l) }
+        l==b {skip=1} !skip {print l} l==e {skip=0}' "$bf")"
+    printf '%s\n' "$tmp" > "$bf"
+}
+
+write_workspace_block() {
+    local bf="$1" host_path="$2"
+    remove_workspace_block "$bf"
+    {
+        echo ""
+        echo "$WORKSPACE_BIND_BEGIN"
+        echo "# Vom Launcher interaktiv beim Erst-Start gesetzt. Pfad existiert"
+        echo "# nicht mehr -> Block wird verworfen und Dialog erneut gestartet."
+        echo "${host_path}=${WORKSPACE_CONTAINER_PATH}:rw"
+        echo "$WORKSPACE_BIND_END"
+    } >> "$bf"
+}
+
+ensure_senity_workspace() {
+    local bf="$1"
+    local host_path resolved
+    host_path="$(read_workspace_host_from_bindings "$bf")"
+    if [[ -n "$host_path" ]]; then
+        resolved="$(resolve_workspace_host "$host_path")"
+        if [[ -d "$resolved" ]]; then
+            write_ok "senity-workspace: $host_path"
+            return 0
+        fi
+        write_warn "senity-workspace-Pfad fehlt: $resolved — Konfiguration wird neu abgefragt."
+        remove_workspace_block "$bf"
+    fi
+
+    if [[ ! -t 0 ]]; then
+        write_warn "senity-workspace nicht konfiguriert und kein TTY — bitte Launcher interaktiv starten."
+        return 0
+    fi
+
+    echo
+    write_info "senity-workspace ist noch nicht konfiguriert."
+    local answer
+    read -r -p "Hast du den senity-workspace bereits lokal installiert? [j/N] " answer
+    if [[ "$answer" =~ ^[jJyY]([aA]?|[eE][sS])?$ ]]; then
+        local input check
+        while true; do
+            read -r -p "Pfad zum bestehenden senity-workspace: " input
+            input="${input%/}"
+            input="${input%\\}"
+            if [[ -z "$input" ]]; then
+                write_warn "Leerer Pfad — Konfiguration abgebrochen."
+                return 0
+            fi
+            check="$(resolve_workspace_host "$input")"
+            if [[ -d "$check" ]]; then
+                write_workspace_block "$bf" "$input"
+                write_ok "senity-workspace eingetragen: $input"
+                return 0
+            fi
+            write_warn "Pfad nicht gefunden: $check"
+        done
+    fi
+
+    read -r -p "Soll ich den senity-workspace nach workspace/projects/senity-workspace klonen? [j/N] " answer
+    if [[ "$answer" =~ ^[jJyY]([aA]?|[eE][sS])?$ ]]; then
+        local rel="workspace/projects/senity-workspace"
+        local dir="${SCRIPT_DIR}/${rel}"
+        local kf="${SCRIPT_DIR}/.deploy-keys/senity-workspace"
+        write_info "Klone senity-workspace nach ${rel}..."
+        mkdir -p "$(dirname "$dir")"
+        if [[ -d "$dir" ]]; then
+            write_warn "Zielverzeichnis existiert bereits — Block wird ohne Klonen eingetragen."
+            write_workspace_block "$bf" "$rel"
+            write_ok "senity-workspace eingetragen: $rel"
+            return 0
+        fi
+        if clone_managed_repo "$WORKSPACE_REPO_URL" "$dir" "$kf"; then
+            write_workspace_block "$bf" "$rel"
+            write_ok "senity-workspace geklont und eingetragen: $rel"
+        else
+            write_warn "Klonen fehlgeschlagen (Deploy-Key evtl. nicht registriert, kein ~/.ssh-Zugang)."
+        fi
+    else
+        write_warn "senity-workspace bleibt unkonfiguriert — Container startet ohne Workspace-Mount."
+    fi
 }
 
 # ══════════════════════════════════════════════════════════════
@@ -796,6 +930,9 @@ fi
 
 # Repo-Mounts als auto-verwalteten Block in .bindings schreiben/aktualisieren
 update_managed_bindings "$bindings_file"
+
+# senity-workspace-Mount interaktiv setzen (oder ueberspringen falls schon ok)
+ensure_senity_workspace "$bindings_file"
 
 # Pre-Scan: '!<glob>'-Excludes einsammeln (gelten global fuer alle Mounts).
 exclude_patterns=()

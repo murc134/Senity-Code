@@ -22,24 +22,27 @@ Der Provider ist der Senity Chat Proxy.
 - `/workspace/projects/senity-workspace` — das Haupt-Projekt (Schreibzugriff).
 - `/workspace/projects/<name>` — weitere Repos, die ueber den Skill
   `include-git-repository` geklont wurden (siehe Regel unten).
-- `/workspace/.claude/{skills,commands,agents}/` — jeweils mit drei
+- `/workspace/.claude/{skills,commands,agents}/` — jeweils mit zwei
   Quellen nebeneinander:
-  - `intern/`  — geteilte Repos (murc134), **read-only**.
-  - `global/`  — die host-globalen `~/.claude/...` des Nutzers, rw.
+  - `intern/`  — geteilte Repos (`murc134/Claude-{Skills,Commands,Agents}`),
+    **read-only**, wird bei jedem Start frisch geklont.
   - `private/` — projektlokal, rw.
 
 ## Regel: neue Skills / Commands / Agents
 
 Wenn du fuer den Nutzer einen **Skill, Command oder Agent** erstellst,
-**frage immer zuerst**, ob er *global* oder *privat* sein soll:
+**frage immer zuerst**, ob er ins geteilte `intern/`-Repo oder nach
+`private/` soll:
 
-- **global**  → speichern unter `/workspace/.claude/<bereich>/global/`
-  (landet host-seitig in `~/.claude/<bereich>/`, gilt nutzerweit).
-- **privat**  → speichern unter `/workspace/.claude/<bereich>/private/`
-  (bleibt im Projekt).
+- **intern** → unter `/workspace/.claude/<bereich>/intern/` anlegen und
+  in das passende `murc134/Claude-…`-Repo pushen (gilt fuer alle Nutzer
+  des Containers).
+- **privat** → unter `/workspace/.claude/<bereich>/private/` speichern
+  (bleibt im Projekt, kein Push).
 
 Sagt der Nutzer nichts dazu, ist die Vorgabe **privat**.
-`intern/` ist read-only und niemals ein Speicherziel.
+`intern/` ist nur via Repo-Push aenderbar, lokale Edits werden beim
+naechsten Start ueberschrieben.
 
 ## Regel: Git-URLs im Chat
 

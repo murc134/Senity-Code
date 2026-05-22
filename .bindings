@@ -6,12 +6,9 @@
 # und ist dadurch bereits unter /workspace/... sichtbar.
 workspace/.claude/skills/intern=/workspace/.claude/skills/intern:ro
 workspace/.claude/skills/private=/workspace/.claude/skills/private:rw
-~/.claude/skills=/workspace/.claude/skills/global:rw
 workspace/.claude/commands/intern=/workspace/.claude/commands/intern:ro
 workspace/.claude/commands/private=/workspace/.claude/commands/private:rw
-~/.claude/commands=/workspace/.claude/commands/global:rw
 workspace/.claude/agents/intern=/workspace/.claude/agents/intern:ro
 workspace/.claude/agents/private=/workspace/.claude/agents/private:rw
-~/.claude/agents=/workspace/.claude/agents/global:rw
 skills=/workspace/.claude/skills/senity-workspace:ro
 # <<< SENITY-VERWALTET <<<

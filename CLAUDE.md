@@ -45,21 +45,27 @@ ACL-gesperrt) und nutzt sie per `GIT_SSH_COMMAND`. Schlägt das fehl (Key nicht
 registriert), fällt der Launcher auf den normalen `~/.ssh`-Zugang zurück. Die
 `claude-*`-Keys sind dieselben wie im Projekt `msh-ai-code-assistant`.
 
-## `.claude`-Dreiteilung
+## `.claude`-Zweiteilung
 
-Pro Bereich (`skills`/`commands`/`agents`) drei nebeneinanderliegende Quellen —
+Pro Bereich (`skills`/`commands`/`agents`) zwei nebeneinanderliegende Quellen —
 verschachtelte Mounts, da der eingebaute `/workspace/.claude`-Mount sie sonst
 verdecken würde:
 
-- `intern/` — geteiltes murc134-Repo, **read-only**.
-- `global/` — host-globales `~/.claude/<bereich>/`, rw (nur wenn vorhanden).
+- `intern/` — geteiltes murc134-Repo, **read-only**, wird bei jedem Start
+  frisch geklont (`fresh`-Modus).
 - `private/` — projektlokal (`workspace/.claude/<bereich>/private`), rw.
 
+Host-globale `~/.claude/<bereich>/`-Mounts gibt es nicht mehr: sie waren mit
+`intern/` redundant (gleiche Inhalte, doppelt gemountet) und sind aus den
+Launchern entfernt. Wer im `intern/`-Repo etwas ergänzen will, pusht direkt
+in `murc134/Claude-{Skills,Commands,Agents}`.
+
 **Regel für neue Skills/Commands/Agents:** Wird ein Skill, Command oder Agent
-für den Nutzer erstellt, **immer zuerst fragen**, ob er *global* oder *privat*
-sein soll — global → `…/global/`, privat → `…/private/`. Sagt der Nutzer nichts,
-ist die Vorgabe **privat**. Diese Regel steht auch in `SYSTEM_PROMPT.md`, damit
-der Claude-Code im Container sie befolgt.
+für den Nutzer erstellt, **immer zuerst fragen**, ob er ins geteilte
+`intern/`-Repo (Push nach `murc134/Claude-…`) oder nach `private/`
+(projektlokal, kein Push) gehört. Sagt der Nutzer nichts, ist die Vorgabe
+**privat**. Diese Regel steht auch in `SYSTEM_PROMPT.md`, damit der
+Claude-Code im Container sie befolgt.
 
 ## Mounts in `.bindings`
 

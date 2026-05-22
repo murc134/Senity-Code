@@ -748,19 +748,28 @@ Write-INFO "[4/6] Repo-Setup (verwaltete Repos)..."
 
 # Fest hinterlegte Repos (Teil des Setups, nicht ueber .bindings steuerbar).
 # Mode: fresh = bei jedem Start loeschen + neu klonen; pull = klonen-oder-pullen.
-# senity-workspace ist das Arbeits-Repo -> 'pull', sonst waere nicht-gepushte
-# Arbeit nach jedem Neustart verloren.
+# Hinweis: senity-workspace ist KEIN Managed Repo — der Pfad wird interaktiv
+# beim Erst-Start abgefragt (Ensure-SenityWorkspace), damit Nutzer einen
+# bereits vorhandenen lokalen Workspace mounten koennen statt ihn neben den
+# eigenen zu klonen.
 $ManagedRepos = @(
-    @{ Key='senity-workspace'; Url='ssh://git@git.senity.ai:2200/senity/senity-workspace.git'; Dir='workspace/projects/senity-workspace'; Mode='pull' }
-    @{ Key='claude-skills';    Url='git@github.com:murc134/Claude-Skills.git';                 Dir='workspace/.claude/skills/intern';   Mode='fresh' }
-    @{ Key='claude-commands';  Url='git@github.com:murc134/Claude-Commands.git';               Dir='workspace/.claude/commands/intern'; Mode='fresh' }
-    @{ Key='claude-agents';    Url='git@github.com:murc134/Claude-Agents.git';                 Dir='workspace/.claude/agents/intern';   Mode='fresh' }
+    @{ Key='claude-skills';    Url='git@github.com:murc134/Claude-Skills.git';   Dir='workspace/.claude/skills/intern';   Mode='fresh' }
+    @{ Key='claude-commands';  Url='git@github.com:murc134/Claude-Commands.git'; Dir='workspace/.claude/commands/intern'; Mode='fresh' }
+    @{ Key='claude-agents';    Url='git@github.com:murc134/Claude-Agents.git';   Dir='workspace/.claude/agents/intern';   Mode='fresh' }
 )
 $keyDir = Join-Path $ScriptDir ".deploy-keys"
 
 # Marker fuer den auto-verwalteten Block in .bindings
 $ManagedBindBegin = '# >>> SENITY-VERWALTET (auto-generiert vom Repo-Setup) >>>'
 $ManagedBindEnd   = '# <<< SENITY-VERWALTET <<<'
+
+# Marker fuer den interaktiv konfigurierten senity-workspace-Block in .bindings.
+# Wird von Ensure-SenityWorkspace geschrieben (einmalig beim Erst-Start oder
+# bei verlorenem Host-Pfad). Eigene Eintraege ausserhalb der Marker bleiben.
+$WorkspaceBindBegin     = '# >>> SENITY-WORKSPACE (interaktiv konfiguriert) >>>'
+$WorkspaceBindEnd       = '# <<< SENITY-WORKSPACE <<<'
+$WorkspaceContainerPath = '/workspace/projects/senity-workspace'
+$WorkspaceRepoUrl       = 'ssh://git@git.senity.ai:2200/senity/senity-workspace.git'
 
 # Repo-Mounts als auto-verwalteten Block in .bindings schreiben/aktualisieren.
 # Eigene Eintraege ausserhalb der Marker bleiben unangetastet.
@@ -779,25 +788,170 @@ function Update-ManagedBindings {
     if ($lastNonEmpty -ge 0) { $kept = @($kept[0..$lastNonEmpty]) } else { $kept = @() }
     $block = @($ManagedBindBegin,
         '# Auto-generiert vom Repo-Setup, Aenderungen hier werden bei jedem',
-        '# Start ueberschrieben. senity-workspace liegt direkt in workspace/',
-        '# und ist dadurch bereits unter /workspace/... sichtbar.')
+        '# Start ueberschrieben. Enthaelt die Mounts fuer die intern/private',
+        '# .claude-Quellen. Der senity-workspace-Mount steht in einem eigenen',
+        '# Block (# >>> SENITY-WORKSPACE >>>), interaktiv konfiguriert.')
     foreach ($sub in @('skills','commands','agents')) {
         if (Test-Path (Join-Path $ScriptDir "workspace\.claude\$sub\intern")) {
             $block += "workspace/.claude/$sub/intern=/workspace/.claude/$sub/intern:ro"
         }
         $block += "workspace/.claude/$sub/private=/workspace/.claude/$sub/private:rw"
-        if (Test-Path (Join-Path $HOME ".claude\$sub")) {
-            $block += "~/.claude/$sub=/workspace/.claude/$sub/global:rw"
-        }
     }
-    # Repo-eigener Skill-Ordner (read-only). senity-workspace und Projekte
-    # liegen unter workspace/projects/<name> und sind via /workspace-Mount
-    # automatisch sichtbar, brauchen also keinen eigenen Eintrag.
+    # Repo-eigener Skill-Ordner (read-only) des claude-local-Launchers.
     if (Test-Path (Join-Path $ScriptDir "skills")) {
         $block += "skills=/workspace/.claude/skills/senity-workspace:ro"
     }
     $block += $ManagedBindEnd
     Set-Content -Path $Path -Value ($kept + @('') + $block) -Encoding UTF8
+}
+
+# ══════════════════════════════════════════════════════════════
+# senity-workspace: interaktiver Mount-Setup
+# Liest den Host-Pfad aus dem WORKSPACE-Block in .bindings. Fehlt der
+# Block oder zeigt er auf einen nicht (mehr) existierenden Pfad, wird
+# der Nutzer gefragt: bereits installiert (Pfad eingeben) oder klonen.
+# Beim Pfad-Modus wird NICHT gepullt (User-Verantwortung).
+# ══════════════════════════════════════════════════════════════
+function Get-WorkspaceHostFromBindings {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return $null }
+    $inBlock = $false
+    foreach ($raw in Get-Content $Path -Encoding UTF8) {
+        $ln = $raw.TrimEnd("`r")
+        if ($ln -eq $WorkspaceBindBegin) { $inBlock = $true; continue }
+        if ($ln -eq $WorkspaceBindEnd)   { $inBlock = $false; continue }
+        if (-not $inBlock) { continue }
+        $t = $ln.Trim()
+        if ($t -eq '' -or $t.StartsWith('#')) { continue }
+        # Host-Teil greedy bis zum letzten '=', Container-Teil ohne Space/'='.
+        if ($t -match '^(.+)=(/[^\s=]+)$') {
+            $h = $Matches[1].Trim().Trim('"').Trim("'")
+            $c = $Matches[2]
+            if ($c -match '^(.+):(ro|rw)$') { $c = $Matches[1] }
+            if ($c -eq $WorkspaceContainerPath) { return $h }
+        }
+    }
+    return $null
+}
+
+function Resolve-WorkspaceHost {
+    param([string]$HostPath)
+    if ($HostPath -eq '~') { return $HOME }
+    if ($HostPath.StartsWith('~/') -or $HostPath.StartsWith('~\')) {
+        return (Join-Path $HOME $HostPath.Substring(2))
+    }
+    if ([System.IO.Path]::IsPathRooted($HostPath)) { return $HostPath }
+    return (Join-Path $ScriptDir $HostPath)
+}
+
+function Remove-WorkspaceBlock {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return }
+    $lines = @(Get-Content $Path -Encoding UTF8)
+    $kept = @(); $skip = $false
+    foreach ($ln in $lines) {
+        if ($ln -eq $WorkspaceBindBegin) { $skip = $true; continue }
+        if ($ln -eq $WorkspaceBindEnd)   { $skip = $false; continue }
+        if (-not $skip) { $kept += $ln }
+    }
+    Set-Content -Path $Path -Value $kept -Encoding UTF8
+}
+
+function Write-WorkspaceBlock {
+    param([string]$Path, [string]$HostPath)
+    Remove-WorkspaceBlock -Path $Path
+    $existing = @(Get-Content $Path -Encoding UTF8)
+    $block = @(
+        $WorkspaceBindBegin,
+        '# Vom Launcher interaktiv beim Erst-Start gesetzt. Pfad existiert',
+        '# nicht mehr -> Block wird verworfen und Dialog erneut gestartet.',
+        "${HostPath}=${WorkspaceContainerPath}:rw",
+        $WorkspaceBindEnd
+    )
+    Set-Content -Path $Path -Value ($existing + @('') + $block) -Encoding UTF8
+}
+
+function Invoke-WorkspaceClone {
+    param([string]$Url, [string]$TargetDir, [string]$KeyFile)
+    $parent = Split-Path -Parent $TargetDir
+    if ($parent -and -not (Test-Path $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+    $cloned = $false
+    if (Test-Path $KeyFile) {
+        $env:GIT_SSH_COMMAND = "ssh -i `"$KeyFile`" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+        git clone --quiet --branch main $Url $TargetDir 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { $cloned = $true }
+    }
+    if (-not $cloned) {
+        $env:GIT_SSH_COMMAND = "ssh -o StrictHostKeyChecking=accept-new"
+        git clone --quiet --branch main $Url $TargetDir 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { $cloned = $true }
+    }
+    $env:GIT_SSH_COMMAND = $null
+    return $cloned
+}
+
+function Ensure-SenityWorkspace {
+    param([string]$Path)
+    $hostPath = Get-WorkspaceHostFromBindings -Path $Path
+    if ($hostPath) {
+        $resolved = Resolve-WorkspaceHost -HostPath $hostPath
+        if (Test-Path $resolved -PathType Container) {
+            Write-OK "senity-workspace: $hostPath"
+            return
+        }
+        Write-WARN "senity-workspace-Pfad fehlt: $resolved — Konfiguration wird neu abgefragt."
+        Remove-WorkspaceBlock -Path $Path
+    }
+
+    if (-not [Environment]::UserInteractive -or [Console]::IsInputRedirected) {
+        Write-WARN "senity-workspace nicht konfiguriert und kein interaktives Terminal — bitte Launcher interaktiv starten."
+        return
+    }
+
+    Write-Host ""
+    Write-INFO "senity-workspace ist noch nicht konfiguriert."
+    $answer = Read-Host "Hast du den senity-workspace bereits lokal installiert? [j/N]"
+    if ($answer -match '^(j|J|y|Y)') {
+        while ($true) {
+            $input = Read-Host "Pfad zum bestehenden senity-workspace"
+            $input = $input.Trim().TrimEnd('\','/')
+            if (-not $input) {
+                Write-WARN "Leerer Pfad — Konfiguration abgebrochen."
+                return
+            }
+            $check = Resolve-WorkspaceHost -HostPath $input
+            if (Test-Path $check -PathType Container) {
+                Write-WorkspaceBlock -Path $Path -HostPath $input
+                Write-OK "senity-workspace eingetragen: $input"
+                return
+            }
+            Write-WARN "Pfad nicht gefunden: $check"
+        }
+    }
+
+    $answer = Read-Host "Soll ich den senity-workspace nach workspace/projects/senity-workspace klonen? [j/N]"
+    if ($answer -match '^(j|J|y|Y)') {
+        $rel = 'workspace/projects/senity-workspace'
+        $dir = Join-Path $ScriptDir ($rel -replace '/', '\')
+        $kf  = Join-Path $keyDir 'senity-workspace'
+        if (Test-Path $dir) {
+            Write-WARN "Zielverzeichnis existiert bereits — Block wird ohne Klonen eingetragen."
+            Write-WorkspaceBlock -Path $Path -HostPath $rel
+            Write-OK "senity-workspace eingetragen: $rel"
+            return
+        }
+        Write-INFO "Klone senity-workspace nach $rel..."
+        if (Invoke-WorkspaceClone -Url $WorkspaceRepoUrl -TargetDir $dir -KeyFile $kf) {
+            Write-WorkspaceBlock -Path $Path -HostPath $rel
+            Write-OK "senity-workspace geklont und eingetragen: $rel"
+        } else {
+            Write-WARN "Klonen fehlgeschlagen (Deploy-Key evtl. nicht registriert, kein ~/.ssh-Zugang)."
+        }
+    } else {
+        Write-WARN "senity-workspace bleibt unkonfiguriert — Container startet ohne Workspace-Mount."
+    }
 }
 
 # Ensure-Git ist oben im File definiert (wird vom Self-Update bereits gebraucht).
@@ -945,6 +1099,9 @@ if (-not (Test-Path $bindingsFile)) {
 
 # Repo-Mounts als auto-verwalteten Block in .bindings schreiben/aktualisieren
 Update-ManagedBindings -Path $bindingsFile
+
+# senity-workspace-Mount interaktiv setzen (oder ueberspringen falls schon ok)
+Ensure-SenityWorkspace -Path $bindingsFile
 
 # Pre-Scan: '!<glob>'-Excludes einsammeln (gelten global fuer alle Mounts).
 $excludePatterns = @()
