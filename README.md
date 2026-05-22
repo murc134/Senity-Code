@@ -116,23 +116,22 @@ nach Rueckfrage aus.
 
 ## Codex / Gemini CLI (optional)
 
-Im Container sind zusaetzlich die `codex`- und `gemini`-CLI installiert. Der
-**Login passiert getrennt vom normalen Start** — nicht im Launcher, sondern
-ueber ein eigenes Script:
+Im Container sind zusaetzlich die `codex`- und `gemini`-CLI installiert. Es
+gibt **keinen eigenen Login-Launcher mehr**: Der Login passiert beim ersten
+Aufruf der Skills `codex-delegator` bzw. `gemini-delegator`. Fehlt das Token,
+gibt der Skill den exakten `docker exec`-Befehl mit dem aktuellen Container-Namen
+aus (Format: `senity-workspace-<user>-<pid>`). Du fuehrst ihn in einem zweiten
+Terminal auf dem Host aus, etwa:
 
 ```bash
-# Linux / macOS
-./codex-gemini-login.sh
-
-# Windows
-.\codex-gemini-login.bat
+docker exec -it senity-workspace-c4rtw-12345 codex login    # OpenAI / ChatGPT
+docker exec -it senity-workspace-c4rtw-12345 gemini         # Google
 ```
 
-Das Script baut bei Bedarf das Image (installiert dabei codex + gemini), fragt
-welche CLI(s) du einrichten willst, und startet sie interaktiv fuer den
-OAuth-Login. Die Anmeldedaten landen in `workspace/.codex/` bzw.
-`workspace/.gemini/` und bleiben erhalten — beim naechsten `claude-senity`-Start
-stehen die CLIs angemeldet im Container bereit. Einmal einrichten genuegt.
+Nach dem OAuth-Flow landen die Anmeldedaten in `workspace/.codex/` bzw.
+`workspace/.gemini/` und bleiben ueber kuenftige Container-Starts erhalten.
+Einmal anmelden genuegt. Re-Login: `workspace/.codex/` bzw. `workspace/.gemini/`
+loeschen, beim naechsten Skill-Trigger meldet sich der Auth-Check wieder.
 
 ## Docker Image
 

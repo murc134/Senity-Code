@@ -131,22 +131,19 @@ erreichbar ist). Beide melden sich per **OAuth** an (kein API-Key, keine
 Kosten), Tokens landen unter `$HOME/.codex/` bzw. `$HOME/.gemini/` und
 persistieren automatisch über den `/workspace`-Mount.
 
-**Der Login passiert NICHT im Launcher.** `claude-senity.sh/.ps1` enthält
-keinen Codex/Gemini-Login-Schritt mehr. Wer die beiden CLIs nutzen will,
-führt **einmalig** das eigenständige Script aus:
+**Login: lazy beim ersten Skill-Aufruf, nicht separat.** Es gibt keinen
+eigenständigen Login-Launcher mehr. Die Skills `codex-delegator` und
+`gemini-delegator` (Repo `murc134/Claude-Skills`) prüfen vor dem ersten
+Aufruf, ob `/workspace/.codex/auth.json` bzw. `/workspace/.gemini/oauth_creds.json`
+existiert. Fehlt das Token, instruiert der Skill den User: in einem zweiten
+Terminal `docker exec -it <container> codex login` (bzw. `gemini`) ausführen
+(Container-Name kommt vom Skill aus `$HOSTNAME` mit), OAuth-Flow durchklicken,
+danach Skill erneut anstoßen. Tokens bleiben über den
+`/workspace`-Mount persistent — einmal anmelden, alle künftigen Container-Starts
+sind authentifiziert.
 
-```
-./codex-gemini-login.sh      # Linux / macOS
-.\codex-gemini-login.bat     # Windows  (bootstrappt codex-gemini-login.ps1)
-```
-
-Das Script (`codex-gemini-login.{sh,ps1,bat}`) stellt das Image sicher (Build
-installiert codex + gemini), bietet ein Menü (Codex / Gemini / beide) und
-startet die CLI interaktiv im Workspace-Container für den OAuth-Login. Die
-Tokens landen in `workspace/.codex/` bzw. `workspace/.gemini/` und stehen beim
-nächsten regulären `claude-senity`-Start im Container bereit. Re-Login:
-`workspace/.codex/` bzw. `workspace/.gemini/` löschen und das Script erneut
-ausführen.
+Re-Login: `workspace/.codex/` bzw. `workspace/.gemini/` löschen, beim nächsten
+Skill-Trigger triggert der Auth-Check den Login-Hinweis erneut.
 
 ## MCP-Server-Sync
 
