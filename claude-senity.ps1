@@ -197,7 +197,7 @@ function Test-SenityKey {
     try {
         $req = [System.Net.HttpWebRequest]::Create($endpoint)
         $req.Method        = 'POST'
-        $req.Timeout       = 15000
+        $req.Timeout       = 45000
         $req.ContentType   = 'application/json'
         $req.UserAgent     = 'senity-workspace/1.0'
         $req.Headers.Add('x-api-key', $Key)
@@ -522,7 +522,7 @@ $shouldPersist = $false
 
 while (-not $keyOk) {
     if (-not $token) {
-        # Erstmalige Eingabe
+        # Erstmalige Eingabe (oder nach explizitem Verwurf)
         Write-Host ""
         Write-INFO "SENITY_CHAT_PROXY_KEY ist nicht gesetzt."
         Write-Host ""
@@ -561,10 +561,35 @@ while (-not $keyOk) {
 
     $attempts++
     Write-FAIL "Key-Validierung fehlgeschlagen: $($result.reason)"
+
+    # status=0 = Netzwerkfehler (Timeout/DNS/ConnectFailure). Key NICHT verwerfen,
+    # User fragen ob trotzdem gestartet werden soll. Bei echtem Auth-Fehler
+    # (401/403/404) Key verwerfen und neuen abfragen.
+    $networkError = ($result.status -eq 0)
+
+    if ($networkError) {
+        Write-WARN "Proxy nicht erreichbar oder antwortet zu langsam. Der Key wurde NICHT als ungueltig erkannt."
+        $skipResp = (Read-Host "  Trotzdem starten und Key-Check ueberspringen? [Y/n]").Trim().ToLower()
+        if ($skipResp -eq '' -or $skipResp -eq 'y' -or $skipResp -eq 'j' -or $skipResp -eq 'yes' -or $skipResp -eq 'ja') {
+            Write-WARN "Key-Validierung uebersprungen. Wenn der Key falsch ist, schlaegt die erste Claude-Anfrage fehl."
+            $keyOk = $true
+            if ($shouldPersist) {
+                try {
+                    Set-EnvVar -Path $envFile -Key 'SENITY_CHAT_PROXY_URL' -Value $baseUrl
+                    Set-EnvVar -Path $envFile -Key 'SENITY_CHAT_PROXY_KEY' -Value $token
+                    Write-OK ".env aktualisiert: $envFile"
+                } catch {
+                    Write-WARN ".env konnte nicht geschrieben werden: $($_.Exception.Message)"
+                }
+            }
+            break
+        }
+    }
+
     if ($attempts -ge $maxAttempts) {
         Exit-Error "Nach $maxAttempts Versuchen kein gueltiger Key. Abbruch."
     }
-    Write-INFO "Versuch $attempts/$maxAttempts fehlgeschlagen. Bitte neuen Key eingeben."
+    Write-INFO "Versuch $attempts/$maxAttempts fehlgeschlagen. Bitte Key erneut eingeben."
     $token = $null
     $shouldPersist = $true
 }

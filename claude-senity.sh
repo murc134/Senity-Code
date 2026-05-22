@@ -124,7 +124,7 @@ validate_senity_key() {
     fi
 
     http_code="$(curl -sS -o /dev/null -w '%{http_code}' \
-        --max-time 15 \
+        --max-time 45 \
         -X POST "$endpoint" \
         -H "Content-Type: application/json" \
         -H "x-api-key: $key" \
@@ -424,17 +424,30 @@ while [[ "$key_ok" == false ]]; do
             if [[ $attempts -ge $max_attempts ]]; then
                 exit_error "Nach $max_attempts Versuchen kein gueltiger Key. Abbruch."
             fi
-            write_info "Versuch $attempts/$max_attempts fehlgeschlagen. Bitte neuen Key eingeben."
+            write_info "Versuch $attempts/$max_attempts fehlgeschlagen. Bitte Key erneut eingeben."
             token=""
             should_persist=true
             ;;
         2)
             attempts=$((attempts + 1))
             write_fail "Netzwerkfehler beim Erreichen von $base_url"
+            write_warn "Proxy nicht erreichbar oder antwortet zu langsam. Der Key wurde NICHT als ungueltig erkannt."
+            read -r -p "  Trotzdem starten und Key-Check ueberspringen? [Y/n]: " skip_resp
+            skip_resp="$(echo "${skip_resp:-}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if [[ -z "$skip_resp" || "$skip_resp" == "y" || "$skip_resp" == "j" || "$skip_resp" == "yes" || "$skip_resp" == "ja" ]]; then
+                write_warn "Key-Validierung uebersprungen. Wenn der Key falsch ist, schlaegt die erste Claude-Anfrage fehl."
+                key_ok=true
+                if [[ "$should_persist" == true ]]; then
+                    set_env_var "$ENV_FILE" "SENITY_CHAT_PROXY_URL" "$base_url"
+                    set_env_var "$ENV_FILE" "SENITY_CHAT_PROXY_KEY" "$token"
+                    write_ok ".env aktualisiert: $ENV_FILE"
+                fi
+                continue
+            fi
             if [[ $attempts -ge $max_attempts ]]; then
                 exit_error "Nach $max_attempts Versuchen kein gueltiger Key. Abbruch."
             fi
-            write_info "Versuch $attempts/$max_attempts fehlgeschlagen. URL und Internetverbindung pruefen."
+            write_info "Versuch $attempts/$max_attempts fehlgeschlagen. URL und Internetverbindung pruefen, dann Key erneut eingeben."
             token=""
             should_persist=true
             ;;
