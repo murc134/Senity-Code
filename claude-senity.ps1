@@ -212,6 +212,12 @@ function Enable-WslFeatures {
 # Installiert/aktualisiert die moderne Store-WSL via winget (Paket
 # Microsoft.WSL). Loest die Inbox-WSL implizit ab. Braucht UAC; winget
 # zeigt den Prompt selbst an. Rueckgabe: $true bei Erfolg.
+#
+# winget gibt bei 'Paket bereits installiert, kein Upgrade verfuegbar' einen
+# Non-Zero-ExitCode zurueck (z.B. -1978335189 = NO_APPLICABLE_UPGRADE),
+# obwohl das fuer uns ein Erfolg ist: Microsoft.WSL ist drauf, das Ziel ist
+# erreicht. Wir capturen daher die Output und werten die DE/EN-Wortlaute
+# als zweites Erfolgskriterium.
 function Install-ModernWSL {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         Write-WARN "winget nicht verfuegbar — moderne WSL bitte manuell installieren: https://aka.ms/wsl"
@@ -219,20 +225,43 @@ function Install-ModernWSL {
     }
     Write-INFO "Installiere moderne WSL via winget (Paket: Microsoft.WSL)..."
     Write-INFO "Ein UAC-Prompt erscheint. Nach Abschluss kann ein Reboot oder Terminal-Neustart noetig sein."
+    $outFile = [System.IO.Path]::GetTempFileName()
+    $errFile = [System.IO.Path]::GetTempFileName()
     try {
         $proc = Start-Process -FilePath "winget" `
             -ArgumentList "install","--id","Microsoft.WSL","-e",
                           "--accept-source-agreements","--accept-package-agreements" `
-            -Wait -PassThru -NoNewWindow -ErrorAction Stop
-        if ($proc.ExitCode -eq 0) {
+            -Wait -PassThru -NoNewWindow -ErrorAction Stop `
+            -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        $rc = $proc.ExitCode
+        $outStr = ((Get-Content $outFile -Raw -ErrorAction SilentlyContinue) + "`n" +
+                   (Get-Content $errFile -Raw -ErrorAction SilentlyContinue))
+        if ($outStr.Trim()) { Write-Host $outStr }
+
+        if ($rc -eq 0) {
             Write-OK "Moderne WSL installiert (Microsoft.WSL)."
             return $true
         }
-        Write-WARN "winget install Microsoft.WSL fehlgeschlagen (ExitCode $($proc.ExitCode))."
+        # 'Bereits installiert / kein Upgrade verfuegbar' ist fuer uns Erfolg.
+        # winget meldet das in DE und EN; wir matchen beide Locales.
+        $alreadyInstalled = ($outStr -match 'bereits ein vorhandenes Paket') `
+                       -or  ($outStr -match 'keine neueren Paketversionen') `
+                       -or  ($outStr -match 'Kein verf.{1,3}gbares Upgrade') `
+                       -or  ($outStr -match 'No applicable upgrade') `
+                       -or  ($outStr -match 'No newer package versions') `
+                       -or  ($outStr -match 'No available upgrade found') `
+                       -or  ($outStr -match 'already installed')
+        if ($alreadyInstalled) {
+            Write-OK "Microsoft.WSL ist bereits installiert (winget: kein Upgrade noetig, ExitCode $rc)."
+            return $true
+        }
+        Write-WARN "winget install Microsoft.WSL fehlgeschlagen (ExitCode $rc)."
         return $false
     } catch {
         Write-WARN "winget-Aufruf fehlgeschlagen: $($_.Exception.Message)"
         return $false
+    } finally {
+        Remove-Item $outFile,$errFile -ErrorAction SilentlyContinue
     }
 }
 
