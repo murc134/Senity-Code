@@ -114,6 +114,26 @@ Postet der Nutzer eine Git-URL im Chat, schlaegt Claude proaktiv vor,
 das Repo per `/include-git-repository` zu klonen, fuehrt es aber erst
 nach Rueckfrage aus.
 
+## Codex / Gemini CLI (optional)
+
+Im Container sind zusaetzlich die `codex`- und `gemini`-CLI installiert. Der
+**Login passiert getrennt vom normalen Start** — nicht im Launcher, sondern
+ueber ein eigenes Script:
+
+```bash
+# Linux / macOS
+./codex-gemini-login.sh
+
+# Windows
+.\codex-gemini-login.bat
+```
+
+Das Script baut bei Bedarf das Image (installiert dabei codex + gemini), fragt
+welche CLI(s) du einrichten willst, und startet sie interaktiv fuer den
+OAuth-Login. Die Anmeldedaten landen in `workspace/.codex/` bzw.
+`workspace/.gemini/` und bleiben erhalten — beim naechsten `claude-senity`-Start
+stehen die CLIs angemeldet im Container bereit. Einmal einrichten genuegt.
+
 ## Docker Image
 
 ```dockerfile

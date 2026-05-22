@@ -1109,51 +1109,9 @@ if (-not $hasUserPrompt) {
     }
 }
 
-# ══════════════════════════════════════════════════════════════
-# [5b/6] Optionale CLI-Logins (Codex / Gemini)
-# ══════════════════════════════════════════════════════════════
-# Codex und Gemini CLI sind im Image installiert; Tokens persistieren ueber
-# /workspace ($HOME/.codex bzw. $HOME/.gemini). Wenn der Nutzer noch nicht
-# angebunden ist, fragen wir EINMAL mit Default = "n". Bei Zustimmung
-# starten wir einen kurzlebigen Container, der das CLI-Login interaktiv
-# ausfuehrt. Beide Logins nutzen OAuth (kein API-Key, keine Kosten).
-function Invoke-CliAuth {
-    param(
-        [string]$Label,           # "Codex (ChatGPT)" / "Gemini (Google)"
-        [string]$CredPath,        # workspace-relativer Pfad zur Token-Datei
-        [string[]]$LoginCmd       # Container-CMD zum interaktiven Login
-    )
-    $hostCredPath = Join-Path $workspacePath $CredPath
-    if (Test-Path $hostCredPath) { return }    # bereits eingerichtet
-
-    Write-Host ""
-    Write-Host "  $Label ist noch nicht angebunden." -ForegroundColor Yellow
-    $answer = Read-Host "  Jetzt per OAuth einrichten? [y/N]"
-    if ($answer -notmatch '^[yYjJ]') {
-        Write-OK "$Label uebersprungen (kein Login)"
-        return
-    }
-
-    Write-INFO "Starte interaktiven $Label-Login (Browser-/Device-Flow)..."
-    $authArgs = @(
-        "-it", "--rm",
-        "-v", "$(ConvertTo-DockerPath $workspacePath):/workspace",
-        "-e", "HOME=/workspace",
-        "-e", "TERM=xterm-256color",
-        "-w", "/workspace"
-    )
-    docker run @authArgs senity-claude:latest @LoginCmd
-    if ($LASTEXITCODE -eq 0 -and (Test-Path $hostCredPath)) {
-        Write-OK "$Label erfolgreich angebunden"
-    } else {
-        Write-WARN "$Label-Login nicht abgeschlossen (Exit $LASTEXITCODE)"
-    }
-}
-
-Write-Sep
-Write-INFO "[5b/6] Optionale CLI-Logins pruefen..."
-Invoke-CliAuth -Label "Codex (ChatGPT)" -CredPath ".codex\auth.json" -LoginCmd @("codex","login")
-Invoke-CliAuth -Label "Gemini (Google)" -CredPath ".gemini\oauth_creds.json" -LoginCmd @("gemini","auth","login")
+# Hinweis: Der Codex-/Gemini-Login passiert NICHT mehr hier im Launcher.
+# Wer Codex/Gemini im Container nutzen will, fuehrt einmalig das separate
+# Script aus:  .\codex-gemini-login.bat   (Linux/macOS: ./codex-gemini-login.sh)
 
 # ══════════════════════════════════════════════════════════════
 # [6/6] Container starten

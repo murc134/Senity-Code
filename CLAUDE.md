@@ -124,13 +124,22 @@ erreichbar ist). Beide melden sich per **OAuth** an (kein API-Key, keine
 Kosten), Tokens landen unter `$HOME/.codex/` bzw. `$HOME/.gemini/` und
 persistieren automatisch über den `/workspace`-Mount.
 
-Vor dem Start (Phase `[5b/6]`) prüfen die Launcher, ob die Token-Dateien
-existieren. Wenn nicht, wird **einmalig** mit Default `n` gefragt, ob der
-jeweilige Account angebunden werden soll. Bei `y` startet ein kurzlebiger
-Container für den interaktiven `codex login` bzw. `gemini auth login`. Sobald
-Tokens persistiert sind, wird der Prompt bei späteren Starts nicht mehr
-gezeigt. Manuelles Re-Login: einfach `workspace/.codex/` bzw.
-`workspace/.gemini/` löschen.
+**Der Login passiert NICHT im Launcher.** `claude-senity.sh/.ps1` enthält
+keinen Codex/Gemini-Login-Schritt mehr. Wer die beiden CLIs nutzen will,
+führt **einmalig** das eigenständige Script aus:
+
+```
+./codex-gemini-login.sh      # Linux / macOS
+.\codex-gemini-login.bat     # Windows  (bootstrappt codex-gemini-login.ps1)
+```
+
+Das Script (`codex-gemini-login.{sh,ps1,bat}`) stellt das Image sicher (Build
+installiert codex + gemini), bietet ein Menü (Codex / Gemini / beide) und
+startet die CLI interaktiv im Workspace-Container für den OAuth-Login. Die
+Tokens landen in `workspace/.codex/` bzw. `workspace/.gemini/` und stehen beim
+nächsten regulären `claude-senity`-Start im Container bereit. Re-Login:
+`workspace/.codex/` bzw. `workspace/.gemini/` löschen und das Script erneut
+ausführen.
 
 ## Gotchas
 

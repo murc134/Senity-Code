@@ -1021,53 +1021,9 @@ if [[ "$has_user_prompt" == false ]]; then
     fi
 fi
 
-# ══════════════════════════════════════════════════════════════
-# [5b/6] Optionale CLI-Logins (Codex / Gemini)
-# ══════════════════════════════════════════════════════════════
-# Codex und Gemini CLI sind im Image installiert; Tokens persistieren ueber
-# /workspace ($HOME/.codex bzw. $HOME/.gemini). Wenn der Nutzer noch nicht
-# angebunden ist, fragen wir EINMAL mit Default = "n". Bei Zustimmung
-# starten wir einen kurzlebigen Container fuer das interaktive OAuth-Login.
-invoke_cli_auth() {
-    local label="$1"
-    local cred_rel="$2"
-    shift 2
-    local login_cmd=("$@")
-
-    local host_cred="${workspace_path}/${cred_rel}"
-    if [[ -e "$host_cred" ]]; then
-        return 0
-    fi
-
-    echo ""
-    printf "  ${c_magenta}%s ist noch nicht angebunden.${c_reset}\n" "$label"
-    printf "  Jetzt per OAuth einrichten? [y/N] "
-    local answer=""
-    read -r answer || answer=""
-    if [[ ! "$answer" =~ ^[yYjJ] ]]; then
-        write_ok "$label uebersprungen (kein Login)"
-        return 0
-    fi
-
-    write_info "Starte interaktiven ${label}-Login (Browser-/Device-Flow)..."
-    docker run -it --rm \
-        -v "${workspace_path}:/workspace" \
-        -e "HOME=/workspace" \
-        -e "TERM=xterm-256color" \
-        -w "/workspace" \
-        senity-claude:latest "${login_cmd[@]}"
-    local rc=$?
-    if [[ $rc -eq 0 && -e "$host_cred" ]]; then
-        write_ok "$label erfolgreich angebunden"
-    else
-        write_warn "${label}-Login nicht abgeschlossen (Exit $rc)"
-    fi
-}
-
-write_sep
-write_info "[5b/6] Optionale CLI-Logins pruefen..."
-invoke_cli_auth "Codex (ChatGPT)" ".codex/auth.json"        codex login
-invoke_cli_auth "Gemini (Google)" ".gemini/oauth_creds.json" gemini auth login
+# Hinweis: Der Codex-/Gemini-Login passiert NICHT mehr hier im Launcher.
+# Wer Codex/Gemini im Container nutzen will, fuehrt einmalig das separate
+# Script aus:  ./codex-gemini-login.sh   (Windows: codex-gemini-login.bat)
 
 # ══════════════════════════════════════════════════════════════
 # [6/6] Container starten
