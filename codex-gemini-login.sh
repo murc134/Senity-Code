@@ -48,21 +48,46 @@ if ! docker info &>/dev/null; then
 fi
 ok "Docker bereit"
 
-# ── Image sicherstellen (Build installiert codex + gemini) ──
+# ── Image sicherstellen — es muss existieren UND codex + gemini enthalten ──
+# (ein altes Image von vor der codex/gemini-Einfuehrung wird sonst nicht erkannt).
+image_has_clis() {
+    docker run --rm --entrypoint sh "$IMAGE" \
+        -c 'command -v codex >/dev/null 2>&1 && command -v gemini >/dev/null 2>&1' &>/dev/null
+}
+need_build=0
 if ! docker image inspect "$IMAGE" &>/dev/null; then
-    info "Image '$IMAGE' fehlt — wird gebaut (installiert u.a. codex + gemini)..."
+    info "Image '$IMAGE' fehlt."
+    need_build=1
+elif ! image_has_clis; then
+    info "Vorhandenes Image enthaelt codex/gemini noch nicht — Rebuild noetig."
+    need_build=1
+fi
+if [[ $need_build -eq 1 ]]; then
+    info "Baue Image '$IMAGE' (installiert u.a. codex + gemini)..."
     if ! docker build -t "$IMAGE" "$SCRIPT_DIR"; then
         err "Image-Build fehlgeschlagen."
         exit 1
     fi
 fi
-ok "Image bereit: $IMAGE  (codex + gemini sind enthalten)"
+ok "Image bereit: $IMAGE"
 
 mkdir -p "$WORKSPACE"
 
+# ── Token-Dateien zur Erfolgskontrolle (workspace-relativ) ──
+CODEX_CRED=".codex/auth.json"
+GEMINI_CRED=".gemini/oauth_creds.json"
+
 # ── Login im Container ──
+# 1) prueft, ob die CLI ueberhaupt im Image ist (npm-Install ist soft-fail),
+# 2) startet den interaktiven Login, 3) verifiziert per Token-Datei.
 run_login() {
-    local label="$1"; shift
+    local label="$1" cred="$2"; shift 2
+    local cli="$1"
+    if ! docker run --rm --entrypoint sh "$IMAGE" -c "command -v $cli >/dev/null 2>&1"; then
+        err "${label}: '$cli' ist nicht im Image — npm-Install beim Build fehlgeschlagen."
+        err "       Image neu bauen:  docker build -t $IMAGE \"$SCRIPT_DIR\""
+        return 1
+    fi
     echo ""
     info "Starte ${label}-Login im Container — folge dem Browser-/Device-Flow."
     docker run -it --rm \
@@ -71,6 +96,13 @@ run_login() {
         -e "TERM=xterm-256color" \
         -w /workspace \
         "$IMAGE" "$@"
+    local rc=$?
+    if [[ -e "${WORKSPACE}/${cred}" ]]; then
+        ok "${label}: angemeldet."
+        return 0
+    fi
+    err "${label}: kein Token gefunden — Login nicht abgeschlossen (Exit $rc)."
+    return 1
 }
 
 echo ""
@@ -82,20 +114,26 @@ echo "    [q] Abbrechen"
 read -r -p "  Auswahl [3]: " sel
 sel="${sel:-3}"
 
+overall=0
 case "$sel" in
-    1) run_login "Codex"  codex login ;;
-    2) run_login "Gemini" gemini ;;
-    3) run_login "Codex"  codex login
-       run_login "Gemini" gemini ;;
+    1) run_login "Codex"  "$CODEX_CRED"  codex login || overall=1 ;;
+    2) run_login "Gemini" "$GEMINI_CRED" gemini       || overall=1 ;;
+    3) run_login "Codex"  "$CODEX_CRED"  codex login  || overall=1
+       run_login "Gemini" "$GEMINI_CRED" gemini       || overall=1 ;;
     q|Q) info "Abgebrochen."; exit 0 ;;
     *)   err "Ungueltige Auswahl: $sel"; exit 1 ;;
 esac
 
 echo ""
-ok "Login-Vorgang beendet."
-info "Codex:  Token in workspace/.codex/   Gemini: Token in workspace/.gemini/"
-info "Beim naechsten ./claude-senity.sh stehen codex/gemini im Container bereit."
+if [[ $overall -eq 0 ]]; then
+    ok "Login abgeschlossen — beim naechsten ./claude-senity.sh stehen die CLIs"
+    ok "angemeldet im Container bereit (Token in workspace/.codex bzw. .gemini)."
+else
+    err "Mindestens ein Login wurde nicht abgeschlossen — Script erneut ausfuehren."
+fi
 echo ""
 echo "  Hinweis: Bei Gemini im Menue 'Login with Google' waehlen; nach dem"
-echo "           Anmelden mit /quit beenden. codex login beendet sich selbst."
+echo "           Anmelden mit /quit beenden. 'codex login' beendet sich selbst."
+echo "  Re-Login: workspace/.codex bzw. workspace/.gemini loeschen, Script erneut starten."
 echo ""
+exit $overall
