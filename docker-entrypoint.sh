@@ -35,6 +35,52 @@ if command -v jq >/dev/null 2>&1; then
     else
         printf '{"hasCompletedOnboarding":true,"theme":"senity"}\n' > "$CLAUDE_JSON"
     fi
+
+    # ── MCP node_modules sicherstellen ──
+    # senity-mcps wird im 'pull'-Modus geklont (kein fresh), damit die
+    # node_modules unterhalb jedes <mcp>/-Ordners persistent bleiben.
+    # Beim ersten Start (oder nach manuellem Loeschen) fehlt das Verzeichnis
+    # und wird hier einmalig installiert. Danach kein Overhead.
+    if command -v npm >/dev/null 2>&1; then
+        shopt -s nullglob
+        for pkg_json in /workspace/.mcp/senity-mcps/*/package.json; do
+            mcp_dir="$(dirname "$pkg_json")"
+            if [[ ! -d "$mcp_dir/node_modules" ]]; then
+                echo "[mcp] install deps: $(basename "$mcp_dir")"
+                (cd "$mcp_dir" && npm install --silent --no-audit --no-fund 2>&1 | tail -n 3) || \
+                    echo "[mcp] WARN: install fuer $(basename "$mcp_dir") fehlgeschlagen"
+            fi
+        done
+        shopt -u nullglob
+    fi
+
+    # ── MCP-Server-Sync ──
+    # Quelle 1 (Repo, read-only): /workspace/.mcp/senity-mcps/mcpServers.json
+    #   - vom Host-Launcher bei jedem Start frisch geklont (fresh-Modus)
+    #   - enthaelt nur Server-Struktur (command/args/env-Schluessel), KEINE Secrets
+    # Quelle 2 (User, persistent): /workspace/.mcp-config.json
+    #   - gitignored, vom Nutzer gepflegt
+    #   - liefert env-Overrides (z.B. API-Keys) UND eigene zusaetzliche Server
+    # Merge-Regel: Repo-Struktur als Basis, .mcp-config.json deep-merged (Werte
+    # aus der User-Datei gewinnen). Resultat ersetzt .mcpServers in .claude.json.
+    MCP_REPO="${HOME}/.mcp/senity-mcps/mcpServers.json"
+    MCP_USER="${HOME}/.mcp-config.json"
+    if [[ -f "$MCP_REPO" || -f "$MCP_USER" ]]; then
+        tmp_repo="$(mktemp)"
+        tmp_user="$(mktemp)"
+        [[ -f "$MCP_REPO" ]] && jq '.mcpServers // .' "$MCP_REPO" > "$tmp_repo" 2>/dev/null || echo '{}' > "$tmp_repo"
+        [[ -f "$MCP_USER" ]] && jq '.mcpServers // .' "$MCP_USER" > "$tmp_user" 2>/dev/null || echo '{}' > "$tmp_user"
+        tmp_merged="$(mktemp)"
+        # Deep-Merge: a * b -> rekursiv, b gewinnt bei Konflikt
+        if jq -s '.[0] * .[1]' "$tmp_repo" "$tmp_user" > "$tmp_merged" 2>/dev/null; then
+            tmp_out="$(mktemp)"
+            if jq --slurpfile m "$tmp_merged" '.mcpServers = $m[0]' "$CLAUDE_JSON" > "$tmp_out" 2>/dev/null; then
+                cat "$tmp_out" > "$CLAUDE_JSON"
+            fi
+            rm -f "$tmp_out"
+        fi
+        rm -f "$tmp_repo" "$tmp_user" "$tmp_merged"
+    fi
 fi
 
 # ── Senity Theme laden (zentrale Farb-Konfiguration) ──

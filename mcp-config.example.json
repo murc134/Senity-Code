@@ -1,0 +1,32 @@
+{
+  "_kommentar_": "Vorlage fuer workspace/.mcp-config.json (gitignored). Kopiere diese Datei nach workspace/.mcp-config.json und traege deine Credentials/Server ein. Der Container-Entrypoint mergt sie beim Start mit der vorkonfigurierten Server-Liste aus dem senity-mcps-Repo (workspace/.mcp/senity-mcps/mcpServers.json) und schreibt das Ergebnis in workspace/.claude.json (top-level mcpServers). Werte aus DIESER Datei gewinnen bei Konflikten.",
+
+  "mcpServers": {
+    "ticketing": {
+      "env": {
+        "TICKETING_MICROSERVICE_AUTH_TOKEN": "stsk_HIER_DEINEN_TOKEN_EINTRAGEN"
+      }
+    },
+
+    "asana": {
+      "env": {
+        "ASANA_ACCESS_TOKEN": "DEIN_PERSONAL_ACCESS_TOKEN"
+      }
+    },
+
+    "trello": {
+      "env": {
+        "TRELLO_API_KEY": "DEIN_API_KEY",
+        "TRELLO_TOKEN": "DEIN_TOKEN"
+      }
+    },
+
+    "_beispiel_eigener_server_": {
+      "command": "node",
+      "args": ["/workspace/projects/mein-mcp-server/index.js"],
+      "env": {
+        "SOME_VAR": "wert"
+      }
+    }
+  }
+}

@@ -753,9 +753,10 @@ Write-INFO "[4/6] Repo-Setup (verwaltete Repos)..."
 # bereits vorhandenen lokalen Workspace mounten koennen statt ihn neben den
 # eigenen zu klonen.
 $ManagedRepos = @(
-    @{ Key='claude-skills';    Url='git@github.com:murc134/Claude-Skills.git';   Dir='workspace/.claude/skills/intern';   Mode='fresh' }
-    @{ Key='claude-commands';  Url='git@github.com:murc134/Claude-Commands.git'; Dir='workspace/.claude/commands/intern'; Mode='fresh' }
-    @{ Key='claude-agents';    Url='git@github.com:murc134/Claude-Agents.git';   Dir='workspace/.claude/agents/intern';   Mode='fresh' }
+    @{ Key='claude-skills';    Url='git@github.com:murc134/Claude-Skills.git';            Dir='workspace/.claude/skills/intern';   Mode='fresh' }
+    @{ Key='claude-commands';  Url='git@github.com:murc134/Claude-Commands.git';          Dir='workspace/.claude/commands/intern'; Mode='fresh' }
+    @{ Key='claude-agents';    Url='git@github.com:murc134/Claude-Agents.git';            Dir='workspace/.claude/agents/intern';   Mode='fresh' }
+    @{ Key='senity-mcps';      Url='ssh://git@git.senity.ai:2200/senity/senity-mcps.git'; Dir='workspace/.mcp/senity-mcps';        Mode='pull'  }
 )
 $keyDir = Join-Path $ScriptDir ".deploy-keys"
 
@@ -1087,14 +1088,21 @@ $dockerArgs = @(
     "-w", "/workspace"
 )
 
-# .bindings auto-create (reine Mount-Config, keine Markdown-Datei).
-$bindingsFile = Join-Path $ScriptDir ".bindings"
+# .bindings auto-create (lokal, gitignored). Template liegt als
+# .bindings.example im Repo. Beim ersten Start kopieren, sonst Fallback.
+$bindingsFile     = Join-Path $ScriptDir ".bindings"
+$bindingsTemplate = Join-Path $ScriptDir ".bindings.example"
 if (-not (Test-Path $bindingsFile)) {
-    $defaultBindings = @"
+    if (Test-Path $bindingsTemplate) {
+        Copy-Item -Path $bindingsTemplate -Destination $bindingsFile
+        Write-OK ".bindings aus .bindings.example angelegt"
+    } else {
+        $defaultBindings = @"
 # Format: <host>=<container>[:ro|:rw]   Excludes: !<glob>
 "@
-    Set-Content -Path $bindingsFile -Value $defaultBindings -Encoding UTF8
-    Write-OK ".bindings angelegt"
+        Set-Content -Path $bindingsFile -Value $defaultBindings -Encoding UTF8
+        Write-OK ".bindings angelegt (kein Template gefunden)"
+    }
 }
 
 # Repo-Mounts als auto-verwalteten Block in .bindings schreiben/aktualisieren

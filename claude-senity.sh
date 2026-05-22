@@ -593,18 +593,20 @@ fi
 # damit Nutzer einen bereits vorhandenen lokalen Workspace mounten
 # koennen statt ihn neben den eigenen zu klonen.
 # ══════════════════════════════════════════════════════════════
-MANAGED_REPO_KEYS=( "claude-skills" "claude-commands" "claude-agents" )
+MANAGED_REPO_KEYS=( "claude-skills" "claude-commands" "claude-agents" "senity-mcps" )
 MANAGED_REPO_URLS=(
     "git@github.com:murc134/Claude-Skills.git"
     "git@github.com:murc134/Claude-Commands.git"
     "git@github.com:murc134/Claude-Agents.git"
+    "ssh://git@git.senity.ai:2200/senity/senity-mcps.git"
 )
 MANAGED_REPO_DIRS=(
     "workspace/.claude/skills/intern"
     "workspace/.claude/commands/intern"
     "workspace/.claude/agents/intern"
+    "workspace/.mcp/senity-mcps"
 )
-MANAGED_REPO_MODES=( "fresh" "fresh" "fresh" )
+MANAGED_REPO_MODES=( "fresh" "fresh" "fresh" "pull" )
 
 # Marker fuer den auto-verwalteten Block in .bindings
 MANAGED_BIND_BEGIN="# >>> SENITY-VERWALTET (auto-generiert vom Repo-Setup) >>>"
@@ -919,13 +921,20 @@ DOCKER_ARGS=(
     -w /workspace
 )
 
-# .bindings auto-create (reine Mount-Config, keine Markdown-Datei).
+# .bindings auto-create (lokal, gitignored). Template liegt als
+# .bindings.example im Repo. Beim ersten Start kopieren, sonst Fallback.
 bindings_file="${SCRIPT_DIR}/.bindings"
+bindings_template="${SCRIPT_DIR}/.bindings.example"
 if [[ ! -f "$bindings_file" ]]; then
-    cat > "$bindings_file" <<'BINDINGS'
+    if [[ -f "$bindings_template" ]]; then
+        cp "$bindings_template" "$bindings_file"
+        write_ok ".bindings aus .bindings.example angelegt"
+    else
+        cat > "$bindings_file" <<'BINDINGS'
 # Format: <host>=<container>[:ro|:rw]   Excludes: !<glob>
 BINDINGS
-    write_ok ".bindings angelegt"
+        write_ok ".bindings angelegt (kein Template gefunden)"
+    fi
 fi
 
 # Repo-Mounts als auto-verwalteten Block in .bindings schreiben/aktualisieren

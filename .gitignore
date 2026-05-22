@@ -4,6 +4,11 @@ start.lnk
 workspace/
 .claude/
 
+# .bindings ist lokal pro Host (interaktiv konfigurierter Workspace-Pfad,
+# eigene Mounts). Template liegt als .bindings.example im Repo; der Launcher
+# kopiert es beim ersten Start.
+.bindings
+
 # Zur Laufzeit aus .env.shared dekodierte Deploy-Keys (NIE committen).
 # .env.shared selbst (mit den base64-Keys) wird bewusst committet.
 .deploy-keys/

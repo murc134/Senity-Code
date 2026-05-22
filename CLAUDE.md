@@ -13,7 +13,8 @@ das Repo-Setup, das vor jedem Container-Start läuft.
 | `.env.shared` | Committet: base64-kodierte **Deploy-Keys** (Klartext) fürs Repo-Setup |
 | `.env` | Gitignored: Proxy-Credentials (`SENITY_CHAT_PROXY_URL`, `SENITY_CHAT_PROXY_KEY`) |
 | `SYSTEM_PROMPT.md` | Wird bei jedem Start gelesen und Claude Code via `--append-system-prompt` mitgegeben |
-| `.bindings` | Host→Container-Mounts; enthält den auto-verwalteten Repo-Mount-Block und globale Exclude-Patterns |
+| `.bindings.example` | Committet: Template fuer `.bindings`. Wird beim ersten Launcher-Start nach `.bindings` kopiert |
+| `.bindings` | Gitignored, lokal pro Host: Mount-Config (interaktiv konfigurierter Workspace-Pfad + auto-verwaltete Bloecke). Nutzer-Edits ausserhalb der Marker bleiben erhalten |
 
 Die `.sh`/`.ps1`/`.bat` müssen funktional **gleichwertig** bleiben. Die `.bat`
 ist ein reiner pwsh-Bootstrap — sie ruft `claude-senity.ps1 %*` auf und enthält
@@ -22,7 +23,7 @@ die `.bat`.
 
 ## Verwaltete Repos & Deploy-Keys
 
-Vor dem Container-Start klont/pullt der Launcher vier fest hinterlegte Repos
+Vor dem Container-Start klont/pullt der Launcher fünf fest hinterlegte Repos
 (`MANAGED_REPO_*` / `$ManagedRepos`).
 
 | Repo | Klon-Ziel (Host) | Modus |
@@ -31,6 +32,7 @@ Vor dem Container-Start klont/pullt der Launcher vier fest hinterlegte Repos
 | `murc134/Claude-Skills` | `workspace/.claude/skills/intern` | `fresh` |
 | `murc134/Claude-Commands` | `workspace/.claude/commands/intern` | `fresh` |
 | `murc134/Claude-Agents` | `workspace/.claude/agents/intern` | `fresh` |
+| `senity/senity-mcps` (git.senity.ai:2200) | `workspace/.mcp/senity-mcps` | `pull` |
 
 - **`fresh`:** Verzeichnis wird bei *jedem* Start gelöscht und neu geklont — nur
   für Repos, in die der Nutzer nicht schreibt (`:ro`).
@@ -146,6 +148,39 @@ Tokens landen in `workspace/.codex/` bzw. `workspace/.gemini/` und stehen beim
 nächsten regulären `claude-senity`-Start im Container bereit. Re-Login:
 `workspace/.codex/` bzw. `workspace/.gemini/` löschen und das Script erneut
 ausführen.
+
+## MCP-Server-Sync
+
+Vorkonfigurierte MCP-Server (Asana, Trello, ticketing, …) liegen im Repo
+`senity/senity-mcps` (s.o.), das beim Start nach
+`workspace/.mcp/senity-mcps/` geklont/gepullt wird. Customer-spezifische
+Secrets (API-Tokens) **niemals** in dieses Repo committen.
+
+**Zwei Quellen, eine Merge-Regel** (im `docker-entrypoint.sh`):
+
+1. **Repo-Defaults** — `workspace/.mcp/senity-mcps/mcpServers.json`
+   (read-only, vom Senity-Team gepflegt). Enthält `command`, `args`, neutrale
+   `env`-Keys wie `TICKETING_MICROSERVICE_URL`. Keine Credentials.
+2. **User-Config** — `workspace/.mcp-config.json` (gitignored, vom Customer
+   gepflegt). Liefert pro Server `env`-Overrides (Auth-Tokens) und kann
+   eigene zusätzliche Server definieren. Template: `mcp-config.example.json`
+   im Repo-Root.
+
+Der Entrypoint mergt beide via `jq -s '.[0] * .[1]'` (Deep-Merge, User-Werte
+gewinnen) und schreibt das Resultat als top-level `mcpServers` in
+`${HOME}/.claude.json`. Existiert nur eine der beiden Quellen, gewinnt diese.
+
+**node_modules.** Im Repo enthaltene MCPs werden per `npx tsx` direkt aus
+`src/` gestartet (kein Build-Step). Beim ersten Start nach Klon installiert
+der Entrypoint `npm install` einmalig pro `<mcp>/`-Unterordner mit
+`package.json`; danach bleibt `node_modules` dank `pull`-Modus persistent.
+Deshalb ist senity-mcps absichtlich **kein `fresh`-Repo** — sonst wären die
+Deps bei jedem Start weg.
+
+**Identität.** MCPs wie ticketing-mcp identifizieren den User über ihren
+Bearer-Token; jeder Customer trägt seinen eigenen `stsk_*`-Token in
+`workspace/.mcp-config.json` ein. Das Backend matched den Token-Hash
+server-seitig gegen den User-Account.
 
 ## Gotchas
 

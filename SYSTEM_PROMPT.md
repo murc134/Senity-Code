@@ -27,6 +27,13 @@ Der Provider ist der Senity Chat Proxy.
   - `intern/`  — geteilte Repos (`murc134/Claude-{Skills,Commands,Agents}`),
     **read-only**, wird bei jedem Start frisch geklont.
   - `private/` — projektlokal, rw.
+- `/workspace/.mcp/senity-mcps/` — vorkonfigurierte MCP-Server (ticketing,
+  ggf. Asana/Trello/…) aus dem Repo `senity/senity-mcps`. Werden beim Start
+  in `.claude.json` registriert. Customer-spezifische API-Tokens stehen in
+  `/workspace/.mcp-config.json` (gitignored). Wenn ein MCP-Tool fehlschlaegt
+  weil `…AUTH_TOKEN` fehlt: den Nutzer auf `mcp-config.example.json` im
+  Host-Repo (`claude-local/`) verweisen und beschreiben, was nach
+  `workspace/.mcp-config.json` zu kopieren ist.
 
 ## Regel: neue Skills / Commands / Agents
 
