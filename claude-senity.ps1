@@ -1088,20 +1088,29 @@ $dockerArgs = @(
     "-w", "/workspace"
 )
 
-# .bindings auto-create (lokal, gitignored). Template liegt als
-# .bindings.example im Repo. Beim ersten Start kopieren, sonst Fallback.
-$bindingsFile     = Join-Path $ScriptDir ".bindings"
-$bindingsTemplate = Join-Path $ScriptDir ".bindings.example"
+# .bindings ist im Repo enthalten (initial state nach Klon), aber lokale
+# Aenderungen sollen git nicht stoeren -> einmalig --skip-worktree setzen.
+$bindingsFile = Join-Path $ScriptDir ".bindings"
 if (-not (Test-Path $bindingsFile)) {
-    if (Test-Path $bindingsTemplate) {
-        Copy-Item -Path $bindingsTemplate -Destination $bindingsFile
-        Write-OK ".bindings aus .bindings.example angelegt"
-    } else {
-        $defaultBindings = @"
+    # Fallback falls die Datei manuell geloescht wurde.
+    $defaultBindings = @"
 # Format: <host>=<container>[:ro|:rw]   Excludes: !<glob>
 "@
-        Set-Content -Path $bindingsFile -Value $defaultBindings -Encoding UTF8
-        Write-OK ".bindings angelegt (kein Template gefunden)"
+    Set-Content -Path $bindingsFile -Value $defaultBindings -Encoding UTF8
+    Write-OK ".bindings angelegt (war nicht vorhanden)"
+}
+# skip-worktree fuer .bindings setzen, damit lokale Edits nicht im git-status
+# auftauchen. Idempotent: nur setzen, wenn noch nicht aktiv.
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    & git -C $ScriptDir rev-parse --git-dir *> $null
+    if ($LASTEXITCODE -eq 0) {
+        $bindingsStatus = (& git -C $ScriptDir ls-files -v -- .bindings 2>$null)
+        if ($bindingsStatus -and $bindingsStatus.Substring(0,1) -ne 'S') {
+            & git -C $ScriptDir update-index --skip-worktree .bindings 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Write-OK ".bindings: skip-worktree gesetzt (lokale Edits werden nicht getrackt)"
+            }
+        }
     }
 }
 

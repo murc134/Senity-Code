@@ -1,0 +1,15 @@
+# Format: <host>=<container>[:ro|:rw]   Excludes: !<glob>
+
+# >>> SENITY-VERWALTET (auto-generiert vom Repo-Setup) >>>
+# Auto-generiert vom Repo-Setup, Aenderungen hier werden bei jedem
+# Start ueberschrieben. Enthaelt die Mounts fuer die intern/private
+# .claude-Quellen. Der senity-workspace-Mount steht in einem eigenen
+# Block (# >>> SENITY-WORKSPACE >>>), interaktiv konfiguriert.
+workspace/.claude/skills/intern=/workspace/.claude/skills/intern:ro
+workspace/.claude/skills/private=/workspace/.claude/skills/private:rw
+workspace/.claude/commands/intern=/workspace/.claude/commands/intern:ro
+workspace/.claude/commands/private=/workspace/.claude/commands/private:rw
+workspace/.claude/agents/intern=/workspace/.claude/agents/intern:ro
+workspace/.claude/agents/private=/workspace/.claude/agents/private:rw
+skills=/workspace/.claude/skills/senity-workspace:ro
+# <<< SENITY-VERWALTET <<<

@@ -921,19 +921,26 @@ DOCKER_ARGS=(
     -w /workspace
 )
 
-# .bindings auto-create (lokal, gitignored). Template liegt als
-# .bindings.example im Repo. Beim ersten Start kopieren, sonst Fallback.
+# .bindings ist im Repo enthalten (initial state nach Klon), aber lokale
+# Aenderungen sollen git nicht stoeren -> einmalig --skip-worktree setzen.
+# Idempotent: prueft den aktuellen Zustand und macht nur bei Bedarf etwas.
 bindings_file="${SCRIPT_DIR}/.bindings"
-bindings_template="${SCRIPT_DIR}/.bindings.example"
 if [[ ! -f "$bindings_file" ]]; then
-    if [[ -f "$bindings_template" ]]; then
-        cp "$bindings_template" "$bindings_file"
-        write_ok ".bindings aus .bindings.example angelegt"
-    else
-        cat > "$bindings_file" <<'BINDINGS'
+    # Fallback falls die Datei manuell geloescht wurde (sollte nicht passieren,
+    # da sie im Repo liegt). Minimaler Inhalt; Launcher fuellt dann den
+    # SENITY-VERWALTET-Block.
+    cat > "$bindings_file" <<'BINDINGS'
 # Format: <host>=<container>[:ro|:rw]   Excludes: !<glob>
 BINDINGS
-        write_ok ".bindings angelegt (kein Template gefunden)"
+    write_ok ".bindings angelegt (war nicht vorhanden)"
+fi
+# skip-worktree fuer .bindings setzen, damit lokale Edits nicht im git-status
+# auftauchen. 'git ls-files -v' markiert skip-worktree mit 'S'; nur setzen,
+# wenn noch nicht aktiv. Best-effort: still scheitern falls kein git-Repo.
+if command -v git >/dev/null 2>&1 && git -C "$SCRIPT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+    if [[ "$(git -C "$SCRIPT_DIR" ls-files -v -- .bindings 2>/dev/null | cut -c1)" != "S" ]]; then
+        git -C "$SCRIPT_DIR" update-index --skip-worktree .bindings 2>/dev/null && \
+            write_ok ".bindings: skip-worktree gesetzt (lokale Edits werden nicht getrackt)"
     fi
 fi
 

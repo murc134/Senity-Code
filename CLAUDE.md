@@ -13,8 +13,7 @@ das Repo-Setup, das vor jedem Container-Start läuft.
 | `.env.shared` | Committet: base64-kodierte **Deploy-Keys** (Klartext) fürs Repo-Setup |
 | `.env` | Gitignored: Proxy-Credentials (`SENITY_CHAT_PROXY_URL`, `SENITY_CHAT_PROXY_KEY`) |
 | `SYSTEM_PROMPT.md` | Wird bei jedem Start gelesen und Claude Code via `--append-system-prompt` mitgegeben |
-| `.bindings.example` | Committet: Template fuer `.bindings`. Wird beim ersten Launcher-Start nach `.bindings` kopiert |
-| `.bindings` | Gitignored, lokal pro Host: Mount-Config (interaktiv konfigurierter Workspace-Pfad + auto-verwaltete Bloecke). Nutzer-Edits ausserhalb der Marker bleiben erhalten |
+| `.bindings` | Committet als initialer Zustand. Launcher setzt einmalig `git update-index --skip-worktree`, danach erscheinen lokale Edits (interaktiver Workspace-Pfad, eigene Mounts) nicht mehr im `git status` |
 
 Die `.sh`/`.ps1`/`.bat` müssen funktional **gleichwertig** bleiben. Die `.bat`
 ist ein reiner pwsh-Bootstrap — sie ruft `claude-senity.ps1 %*` auf und enthält
