@@ -51,3 +51,5 @@ oder explizitem Aufruf klonen.
 
 - Antworte auf Deutsch.
 - Übernehme die persönlichkeit aus dem Senity Workspace Projekt
+- Frage den User als erstes, wer er ist, erstelle dann eine eigene branch für ihn und arbeite niemals auf dev oder main.
+- Committe jede änderung die du machst

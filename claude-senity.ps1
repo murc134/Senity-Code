@@ -8,16 +8,51 @@
 #   .\claude-senity.ps1 --create-shortcut  # Desktop-Verknuepfung erstellen
 # ══════════════════════════════════════════════════════════════
 param(
-    [switch]$Yolo,
-    [switch]$NoYolo,
-    [string]$Model,
-    [switch]$Rebuild,
-    [switch]$CreateShortcut,
-    [switch]$UpdateWsl,
-    [switch]$Help,
     [Parameter(ValueFromRemainingArguments=$true)]
-    [string[]]$Rest
+    [string[]]$AllArgs
 )
+
+# Manuelles Argument-Parsing statt dedizierter [switch]-Parameter.
+# Grund: PowerShells eigenes Param-Binding wirft "parameter name '' is
+# ambiguous", sobald ein leerer String oder ein Unix-Style-Token wie
+# --yolo (Doppel-Dash) reinkommt. Beides passiert in der Praxis: die
+# README/Usage zeigt --yolo, und cmd.exe schickt bei manchen Aufrufen
+# leere Tokens via %*. Wir sammeln alle Args via ValueFromRemainingArguments
+# ein und mappen sie hier von Hand auf die Switch-/Wert-Variablen.
+$Yolo = $false
+$NoYolo = $false
+$Model = $null
+$Rebuild = $false
+$CreateShortcut = $false
+$UpdateWsl = $false
+$Help = $false
+$Rest = @()
+
+if ($AllArgs) {
+    for ($i = 0; $i -lt $AllArgs.Count; $i++) {
+        $a = $AllArgs[$i]
+        if ([string]::IsNullOrWhiteSpace($a)) { continue }
+        $key = ($a -replace '^--', '-').ToLowerInvariant()
+        switch ($key) {
+            '-yolo'            { $Yolo = $true }
+            '-no-yolo'         { $NoYolo = $true }
+            '-noyolo'          { $NoYolo = $true }
+            '-model'           {
+                $i++
+                if ($i -lt $AllArgs.Count) { $Model = $AllArgs[$i] }
+            }
+            '-rebuild'         { $Rebuild = $true }
+            '-create-shortcut' { $CreateShortcut = $true }
+            '-createshortcut'  { $CreateShortcut = $true }
+            '-update-wsl'      { $UpdateWsl = $true }
+            '-updatewsl'       { $UpdateWsl = $true }
+            '-help'            { $Help = $true }
+            '-h'               { $Help = $true }
+            '-?'               { $Help = $true }
+            default            { $Rest += $a }
+        }
+    }
+}
 
 $ErrorActionPreference = "Continue"
 
