@@ -741,13 +741,41 @@ update_managed_bindings() {
         # Repo-eigener Skill-Ordner (read-only) des claude-local-Launchers.
         [[ -d "${SCRIPT_DIR}/skills" ]] && \
             echo "skills=/workspace/.claude/skills/senity-workspace:ro"
-        # INITIAL_PROMPT.md als File-Mount, damit Claude im Container sie
-        # lesen/editieren kann (rw). Liegt unter projects/autostart/ damit
-        # der Pfad als sichtbares "Autostart-Projekt" auffindbar ist.
-        [[ -f "${SCRIPT_DIR}/INITIAL_PROMPT.md" ]] && \
-            echo "INITIAL_PROMPT.md=/workspace/projects/autostart/INITIAL_PROMPT.md:rw"
+        # Hinweis: INITIAL_PROMPT.md wird NICHT als File-Bind-Mount gemountet —
+        # Docker Desktop macOS (virtiofs) lehnt geschachtelte File-Mounts in den
+        # /workspace-Mount ab ("mountpoint is outside of rootfs"). Stattdessen
+        # spiegelt sync_autostart_initial_prompt die Datei bidirektional zwischen
+        # Repo-Root und workspace/projects/autostart/, das ueber den vorhandenen
+        # /workspace-Mount sichtbar ist.
         echo "$MANAGED_BIND_END"
     } > "$bf"
+}
+
+# INITIAL_PROMPT.md bidirektional zwischen Repo-Root und der gitignorierten
+# Workspace-Kopie spiegeln. Loest das Mac/virtiofs-Problem: statt eines
+# geschachtelten File-Bind-Mounts liegt die Datei innerhalb des bestehenden
+# /workspace-Mounts und ist damit auf allen Plattformen erreichbar.
+# Newer-wins beim Start; Container-Edits propagieren beim naechsten Launcher-Start.
+sync_autostart_initial_prompt() {
+    local root="${SCRIPT_DIR}/INITIAL_PROMPT.md"
+    [[ -f "$root" ]] || return 0
+    local auto_dir="${SCRIPT_DIR}/workspace/projects/autostart"
+    mkdir -p "$auto_dir"
+    local copy="${auto_dir}/INITIAL_PROMPT.md"
+    if [[ ! -f "$copy" ]]; then
+        cp -f "$root" "$copy"
+        return 0
+    fi
+    # mtime-Vergleich, GNU/BSD-portabel: zwei stat-Varianten probieren.
+    local root_mt copy_mt
+    root_mt=$(stat -c %Y "$root" 2>/dev/null || stat -f %m "$root" 2>/dev/null || echo 0)
+    copy_mt=$(stat -c %Y "$copy" 2>/dev/null || stat -f %m "$copy" 2>/dev/null || echo 0)
+    if (( copy_mt > root_mt )); then
+        cp -f "$copy" "$root"
+        write_ok "INITIAL_PROMPT.md: Container-Edit -> Repo-Root uebernommen"
+    elif (( root_mt > copy_mt )); then
+        cp -f "$root" "$copy"
+    fi
 }
 
 # ══════════════════════════════════════════════════════════════
@@ -951,6 +979,9 @@ fi
 
 # Repo-Mounts als auto-verwalteten Block in .bindings schreiben/aktualisieren
 update_managed_bindings "$bindings_file"
+
+# INITIAL_PROMPT.md zwischen Repo-Root und workspace/projects/autostart/ syncen
+sync_autostart_initial_prompt
 
 # senity-workspace-Mount interaktiv setzen (oder ueberspringen falls schon ok)
 ensure_senity_workspace "$bindings_file"

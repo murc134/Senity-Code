@@ -905,14 +905,41 @@ function Update-ManagedBindings {
     if (Test-Path (Join-Path $ScriptDir "skills")) {
         $block += "skills=/workspace/.claude/skills/senity-workspace:ro"
     }
-    # INITIAL_PROMPT.md als File-Mount, damit Claude im Container sie
-    # lesen/editieren kann (rw). Liegt unter projects/autostart/ damit
-    # der Pfad als sichtbares "Autostart-Projekt" auffindbar ist.
-    if (Test-Path (Join-Path $ScriptDir "INITIAL_PROMPT.md")) {
-        $block += "INITIAL_PROMPT.md=/workspace/projects/autostart/INITIAL_PROMPT.md:rw"
-    }
+    # Hinweis: INITIAL_PROMPT.md wird NICHT als File-Bind-Mount gemountet —
+    # Docker Desktop macOS (virtiofs) lehnt geschachtelte File-Mounts in den
+    # /workspace-Mount ab ("mountpoint is outside of rootfs"). Stattdessen
+    # spiegelt Sync-AutostartInitialPrompt die Datei bidirektional zwischen
+    # Repo-Root und workspace/projects/autostart/, das ueber den vorhandenen
+    # /workspace-Mount sichtbar ist.
     $block += $ManagedBindEnd
     Set-Content -Path $Path -Value ($kept + @('') + $block) -Encoding UTF8
+}
+
+# INITIAL_PROMPT.md bidirektional zwischen Repo-Root und der gitignorierten
+# Workspace-Kopie spiegeln. Loest das Mac/virtiofs-Problem: statt eines
+# geschachtelten File-Bind-Mounts liegt die Datei innerhalb des bestehenden
+# /workspace-Mounts und ist damit auf allen Plattformen erreichbar.
+# Newer-wins beim Start; Container-Edits propagieren beim naechsten Launcher-Start.
+function Sync-AutostartInitialPrompt {
+    $root = Join-Path $ScriptDir "INITIAL_PROMPT.md"
+    if (-not (Test-Path $root)) { return }
+    $autoDir = Join-Path $ScriptDir "workspace\projects\autostart"
+    if (-not (Test-Path $autoDir)) {
+        New-Item -ItemType Directory -Path $autoDir -Force | Out-Null
+    }
+    $copy = Join-Path $autoDir "INITIAL_PROMPT.md"
+    if (-not (Test-Path $copy)) {
+        Copy-Item -LiteralPath $root -Destination $copy -Force
+        return
+    }
+    $rootTime = (Get-Item -LiteralPath $root).LastWriteTimeUtc
+    $copyTime = (Get-Item -LiteralPath $copy).LastWriteTimeUtc
+    if ($copyTime -gt $rootTime) {
+        Copy-Item -LiteralPath $copy -Destination $root -Force
+        Write-OK "INITIAL_PROMPT.md: Container-Edit -> Repo-Root uebernommen"
+    } elseif ($rootTime -gt $copyTime) {
+        Copy-Item -LiteralPath $root -Destination $copy -Force
+    }
 }
 
 # ══════════════════════════════════════════════════════════════
@@ -1225,6 +1252,9 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
 
 # Repo-Mounts als auto-verwalteten Block in .bindings schreiben/aktualisieren
 Update-ManagedBindings -Path $bindingsFile
+
+# INITIAL_PROMPT.md zwischen Repo-Root und workspace/projects/autostart/ syncen
+Sync-AutostartInitialPrompt
 
 # senity-workspace-Mount interaktiv setzen (oder ueberspringen falls schon ok)
 Ensure-SenityWorkspace -Path $bindingsFile

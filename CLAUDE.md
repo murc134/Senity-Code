@@ -123,11 +123,23 @@ landet. Gibt der Nutzer beim Launcher-Aufruf einen eigenen Positional-Prompt
 mit (z.B. `claude-senity.ps1 "do X"`), wird die Datei nicht geschrieben und
 der User-Prompt hat Vorrang. Dynamisch, **kein Rebuild** nötig.
 
-Zusätzlich wird `INITIAL_PROMPT.md` vom Launcher als File-Bind-Mount nach
-`/workspace/projects/autostart/INITIAL_PROMPT.md` (rw) durchgereicht (Eintrag
-im verwalteten `.bindings`-Block), damit Claude im Container die Datei selbst
-lesen und bearbeiten kann. Edits aus dem Container schlagen direkt auf das
-Repo durch.
+Zusätzlich spiegelt der Launcher `INITIAL_PROMPT.md` beim Start bidirektional
+zwischen Repo-Root und `workspace/projects/autostart/INITIAL_PROMPT.md`
+(`sync_autostart_initial_prompt` / `Sync-AutostartInitialPrompt`). Die
+Workspace-Kopie liegt im gitignorierten `workspace/`-Baum und ist im Container
+über den vorhandenen `/workspace`-Mount unter
+`/workspace/projects/autostart/INITIAL_PROMPT.md` erreichbar, ohne separaten
+File-Bind-Mount. Newer-wins-Regel: wer das jüngere `mtime` hat (Repo-Root vs.
+Workspace-Kopie), gewinnt und überschreibt die andere Seite. Edits aus dem
+Container propagieren beim nächsten Launcher-Start auf die committete
+Repo-Root-Datei.
+
+Hintergrund: Der ursprünglich verwendete File-Bind-Mount (`INITIAL_PROMPT.md`
+nach `/workspace/projects/autostart/INITIAL_PROMPT.md`) scheitert auf
+Docker Desktop macOS (virtiofs) mit `mountpoint is outside of rootfs`, weil
+Docker einen geschachtelten File-Mount in einen bereits gemounteten Pfad nicht
+über virtiofs zustellen kann. Die Sync-Lösung umgeht das ohne nested mount und
+funktioniert plattformübergreifend.
 
 ## Codex- und Gemini-CLI im Container
 
