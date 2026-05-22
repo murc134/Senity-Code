@@ -802,6 +802,12 @@ function Update-ManagedBindings {
     if (Test-Path (Join-Path $ScriptDir "skills")) {
         $block += "skills=/workspace/.claude/skills/senity-workspace:ro"
     }
+    # INITIAL_PROMPT.md als File-Mount, damit Claude im Container sie
+    # lesen/editieren kann (rw). Liegt unter projects/autostart/ damit
+    # der Pfad als sichtbares "Autostart-Projekt" auffindbar ist.
+    if (Test-Path (Join-Path $ScriptDir "INITIAL_PROMPT.md")) {
+        $block += "INITIAL_PROMPT.md=/workspace/projects/autostart/INITIAL_PROMPT.md:rw"
+    }
     $block += $ManagedBindEnd
     Set-Content -Path $Path -Value ($kept + @('') + $block) -Encoding UTF8
 }
@@ -1268,7 +1274,7 @@ $claudeArgs = @()
 if ($Model) { $claudeArgs += @("--model", $Model) }
 if ($yolo)  { $claudeArgs += "--dangerously-skip-permissions" }
 
-# SYSTEM_PROMPT.md dynamisch einlesen (bei jedem Start neu, kein Rebuild noetig).
+# INITIAL_PROMPT.md dynamisch einlesen (bei jedem Start neu, kein Rebuild noetig).
 # HTML-Kommentarbloecke <!-- ... --> werden entfernt. Der gereinigte Inhalt wird
 # in eine Datei innerhalb /workspace geschrieben; der Entrypoint im Container
 # liest sie und uebergibt den Inhalt Claude Code als erste User-Nachricht
@@ -1290,7 +1296,7 @@ if (Test-Path $initialPromptHostFile) {
 }
 
 if (-not $hasUserPrompt) {
-    $sysPromptFile = Join-Path $ScriptDir "SYSTEM_PROMPT.md"
+    $sysPromptFile = Join-Path $ScriptDir "INITIAL_PROMPT.md"
     if (Test-Path $sysPromptFile) {
         $sysRaw   = Get-Content $sysPromptFile -Raw -Encoding UTF8
         $sysClean = ([regex]::Replace($sysRaw, '(?s)<!--.*?-->', '')).Trim()
@@ -1299,7 +1305,7 @@ if (-not $hasUserPrompt) {
             $sysCleanLF = $sysClean -replace "`r`n", "`n"
             [System.IO.File]::WriteAllText($initialPromptHostFile, $sysCleanLF, [System.Text.UTF8Encoding]::new($false))
             $dockerArgs += @("-e", "SENITY_INITIAL_PROMPT_FILE=/workspace/.senity-initial-prompt")
-            Write-OK "SYSTEM_PROMPT.md wird als erste User-Nachricht gesendet"
+            Write-OK "INITIAL_PROMPT.md wird als erste User-Nachricht gesendet"
         }
     }
 }

@@ -741,6 +741,11 @@ update_managed_bindings() {
         # Repo-eigener Skill-Ordner (read-only) des claude-local-Launchers.
         [[ -d "${SCRIPT_DIR}/skills" ]] && \
             echo "skills=/workspace/.claude/skills/senity-workspace:ro"
+        # INITIAL_PROMPT.md als File-Mount, damit Claude im Container sie
+        # lesen/editieren kann (rw). Liegt unter projects/autostart/ damit
+        # der Pfad als sichtbares "Autostart-Projekt" auffindbar ist.
+        [[ -f "${SCRIPT_DIR}/INITIAL_PROMPT.md" ]] && \
+            echo "INITIAL_PROMPT.md=/workspace/projects/autostart/INITIAL_PROMPT.md:rw"
         echo "$MANAGED_BIND_END"
     } > "$bf"
 }
@@ -1136,7 +1141,7 @@ if [[ "$YOLO" == true ]]; then
     CLAUDE_ARGS+=("--dangerously-skip-permissions")
 fi
 
-# SYSTEM_PROMPT.md dynamisch einlesen (bei jedem Start neu, kein Rebuild noetig).
+# INITIAL_PROMPT.md dynamisch einlesen (bei jedem Start neu, kein Rebuild noetig).
 # HTML-Kommentarbloecke <!-- ... --> werden entfernt. Der gereinigte Inhalt
 # wird in eine Datei innerhalb /workspace geschrieben; der Container-
 # Entrypoint reicht ihn als erste (sichtbare) User-Nachricht an Claude Code
@@ -1157,7 +1162,7 @@ initial_prompt_host_file="${workspace_path}/.senity-initial-prompt"
 rm -f "$initial_prompt_host_file" 2>/dev/null || true
 
 if [[ "$has_user_prompt" == false ]]; then
-    sys_prompt_file="${SCRIPT_DIR}/SYSTEM_PROMPT.md"
+    sys_prompt_file="${SCRIPT_DIR}/INITIAL_PROMPT.md"
     if [[ -f "$sys_prompt_file" ]]; then
         if command -v perl &>/dev/null; then
             sys_prompt_content="$(perl -0777 -pe 's/<!--.*?-->//gs' "$sys_prompt_file")"
@@ -1169,7 +1174,7 @@ if [[ "$has_user_prompt" == false ]]; then
         if [[ -n "$(printf '%s' "$sys_prompt_content" | tr -d '[:space:]')" ]]; then
             printf '%s' "$sys_prompt_content" > "$initial_prompt_host_file"
             DOCKER_ARGS+=(-e "SENITY_INITIAL_PROMPT_FILE=/workspace/.senity-initial-prompt")
-            write_ok "SYSTEM_PROMPT.md wird als erste User-Nachricht gesendet"
+            write_ok "INITIAL_PROMPT.md wird als erste User-Nachricht gesendet"
         fi
     fi
 fi

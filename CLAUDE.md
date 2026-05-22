@@ -12,7 +12,7 @@ das Repo-Setup, das vor jedem Container-Start läuft.
 | `claude-senity.sh` / `.ps1` / `.bat` | Host-Launcher (Linux·macOS / Windows / Windows-Bootstrap) |
 | `.env.shared` | Committet: base64-kodierte **Deploy-Keys** (Klartext) fürs Repo-Setup |
 | `.env` | Gitignored: Proxy-Credentials (`SENITY_CHAT_PROXY_URL`, `SENITY_CHAT_PROXY_KEY`) |
-| `SYSTEM_PROMPT.md` | Wird bei jedem Start gelesen und Claude Code via `--append-system-prompt` mitgegeben |
+| `INITIAL_PROMPT.md` | Wird bei jedem Start gelesen und Claude Code via `--append-system-prompt` mitgegeben |
 | `.bindings` | Committet als initialer Zustand. Launcher setzt einmalig `git update-index --skip-worktree`, danach erscheinen lokale Edits (interaktiver Workspace-Pfad, eigene Mounts) nicht mehr im `git status` |
 
 Die `.sh`/`.ps1`/`.bat` müssen funktional **gleichwertig** bleiben. Die `.bat`
@@ -65,7 +65,7 @@ in `murc134/Claude-{Skills,Commands,Agents}`.
 für den Nutzer erstellt, **immer zuerst fragen**, ob er ins geteilte
 `intern/`-Repo (Push nach `murc134/Claude-…`) oder nach `private/`
 (projektlokal, kein Push) gehört. Sagt der Nutzer nichts, ist die Vorgabe
-**privat**. Diese Regel steht auch in `SYSTEM_PROMPT.md`, damit der
+**privat**. Diese Regel steht auch in `INITIAL_PROMPT.md`, damit der
 Claude-Code im Container sie befolgt.
 
 ## Mounts in `.bindings`
@@ -112,7 +112,7 @@ Host-Mount verändert wird, ohne Symlinks und ohne Admin-Rechte. Re-Scan bei
 jedem Launcher-Start, sodass neu entstandene `node_modules` automatisch
 erfasst werden.
 
-## SYSTEM_PROMPT.md
+## INITIAL_PROMPT.md
 
 Wird bei jedem Start gelesen, HTML-Kommentarblöcke (`<!-- … -->`) entfernt, der
 gereinigte Rest in `workspace/.senity-initial-prompt` geschrieben (gitignored,
@@ -122,6 +122,12 @@ an `claude` an, sodass er als **sichtbare erste User-Nachricht** im Chat
 landet. Gibt der Nutzer beim Launcher-Aufruf einen eigenen Positional-Prompt
 mit (z.B. `claude-senity.ps1 "do X"`), wird die Datei nicht geschrieben und
 der User-Prompt hat Vorrang. Dynamisch, **kein Rebuild** nötig.
+
+Zusätzlich wird `INITIAL_PROMPT.md` vom Launcher als File-Bind-Mount nach
+`/workspace/projects/autostart/INITIAL_PROMPT.md` (rw) durchgereicht (Eintrag
+im verwalteten `.bindings`-Block), damit Claude im Container die Datei selbst
+lesen und bearbeiten kann. Edits aus dem Container schlagen direkt auf das
+Repo durch.
 
 ## Codex- und Gemini-CLI im Container
 

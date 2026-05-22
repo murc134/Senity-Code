@@ -210,8 +210,8 @@ if [[ -t 1 && -z "${SENITY_NO_BANNER:-}" ]]; then
     printf '\n'
 fi
 
-# ── Initial-User-Nachricht aus SYSTEM_PROMPT.md ──
-# Der Launcher schreibt den gereinigten SYSTEM_PROMPT.md-Inhalt in eine
+# ── Initial-User-Nachricht aus INITIAL_PROMPT.md ──
+# Der Launcher schreibt den gereinigten INITIAL_PROMPT.md-Inhalt in eine
 # Datei innerhalb /workspace und setzt SENITY_INITIAL_PROMPT_FILE. Wir
 # lesen den Inhalt hier (Multi-Line in Bash zuverlaessig) und haengen ihn
 # als letztes Positional-Argument an, sodass Claude Code ihn als erste
