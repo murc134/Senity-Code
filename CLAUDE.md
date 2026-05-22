@@ -204,8 +204,13 @@ server-seitig gegen den User-Account.
   installiert (winget auf Windows, Homebrew Cask auf macOS). Linux: kein
   Auto-Install (Engine-Setup ist distrospezifisch und root-pflichtig), Hinweis
   auf docs.docker.com. Auf Windows läuft vorab `Ensure-WSL`: prüft, ob `wsl`
-  vorhanden ist (sonst `wsl --install --no-distribution` mit UAC) und führt
-  immer `wsl --update` aus, damit der WSL2-Kernel aktuell ist (Docker Desktop
-  startet sonst stillschweigend nicht). Docker Desktop bzw. WSL-Install können
-  beim ersten Start einen Reboot erzwingen. `npm`/`npx` braucht nur der
-  Container (im Image), nicht der Host.
+  vorhanden und **modern** ist. Detection via `wsl --version` (Test-ModernWSL):
+  - Fehlt `wsl.exe` → `winget install --id Microsoft.WSL -e` (UAC).
+  - Inbox-WSL erkannt (Windows-10-19041-Variante in `C:\Windows\System32\wsl.exe`,
+    kennt weder `--version` noch `--update`) → ebenfalls
+    `winget install Microsoft.WSL`, danach `exit 0` mit Hinweis Terminal-Neustart.
+  - Moderne WSL vorhanden → `wsl --update` läuft nur mit `-UpdateWsl`-Flag,
+    sonst übersprungen (Auto-Update hat in der Praxis laufende Docker-Distros
+    abgeschossen, ERROR_ALREADY_EXISTS beim Re-Import).
+  Docker Desktop bzw. WSL-Install können beim ersten Start einen Reboot
+  erzwingen. `npm`/`npx` braucht nur der Container (im Image), nicht der Host.

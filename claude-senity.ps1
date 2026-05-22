@@ -151,24 +151,92 @@ function Set-EnvVar {
     Set-Content -Path $Path -Value $newLines -Encoding UTF8
 }
 
-# Stellt sicher, dass WSL2 installiert + aktuell ist (Docker-Desktop-Voraussetzung).
-# `wsl --install --no-distribution` aktiviert die Features und installiert den
-# Kernel (benoetigt UAC + ggf. Reboot). `wsl --update` aktualisiert nur den
-# Kernel auf neueren Systemen und braucht oft keinen Reboot.
-function Ensure-WSL {
-    $wslBin = Get-Command wsl -ErrorAction SilentlyContinue
-    if (-not $wslBin) {
-        Write-WARN "WSL nicht im PATH. Installationsversuch via 'wsl --install --no-distribution' (UAC erforderlich)..."
-        try {
-            Start-Process -FilePath "wsl.exe" -ArgumentList "--install","--no-distribution" -Verb RunAs -Wait -ErrorAction Stop
-        } catch {
-            Write-WARN "WSL-Installation fehlgeschlagen oder vom Nutzer abgebrochen. Docker Desktop benoetigt WSL2."
+# Prueft ob das auf dem System verfuegbare wsl.exe die moderne Store-WSL ist.
+# Die Inbox-WSL (Windows-Komponente bis ~19041) versteht weder 'wsl --version'
+# noch 'wsl --update'. Detection: 'wsl --version' aufrufen. Modern: Exit 0
+# und eine Zeile, die "WSL" enthaelt. Inbox: Exit != 0 oder Usage-Output ohne
+# "WSL"-Header.
+function Test-ModernWSL {
+    try {
+        $outFile = [System.IO.Path]::GetTempFileName()
+        $errFile = [System.IO.Path]::GetTempFileName()
+        $proc = Start-Process -FilePath "wsl.exe" -ArgumentList "--version" `
+            -NoNewWindow -PassThru `
+            -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        if (-not $proc.WaitForExit(10000)) {
+            try { $proc.Kill() } catch {}
+            Remove-Item $outFile,$errFile -ErrorAction SilentlyContinue
             return $false
         }
-        Write-WARN "WSL wurde installiert. Ein Reboot kann erforderlich sein, bevor Docker Desktop laeuft."
-        return $true
+        $rc  = $proc.ExitCode
+        $out = (Get-Content $outFile -Raw -ErrorAction SilentlyContinue) + "`n" +
+               (Get-Content $errFile -Raw -ErrorAction SilentlyContinue)
+        Remove-Item $outFile,$errFile -ErrorAction SilentlyContinue
+        if ($rc -ne 0) { return $false }
+        return ($out -match 'WSL\s*-?\s*Version' -or $out -match 'WSL\s*version' -or $out -match 'WSL-Version')
+    } catch {
+        return $false
     }
-    # WSL ist installiert. KEIN automatisches 'wsl --update' mehr:
+}
+
+# Installiert/aktualisiert die moderne Store-WSL via winget (Paket
+# Microsoft.WSL). Loest die Inbox-WSL implizit ab. Braucht UAC; winget
+# zeigt den Prompt selbst an. Rueckgabe: $true bei Erfolg.
+function Install-ModernWSL {
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-WARN "winget nicht verfuegbar — moderne WSL bitte manuell installieren: https://aka.ms/wsl"
+        return $false
+    }
+    Write-INFO "Installiere moderne WSL via winget (Paket: Microsoft.WSL)..."
+    Write-INFO "Ein UAC-Prompt erscheint. Nach Abschluss kann ein Reboot oder Terminal-Neustart noetig sein."
+    try {
+        $proc = Start-Process -FilePath "winget" `
+            -ArgumentList "install","--id","Microsoft.WSL","-e",
+                          "--accept-source-agreements","--accept-package-agreements" `
+            -Wait -PassThru -NoNewWindow -ErrorAction Stop
+        if ($proc.ExitCode -eq 0) {
+            Write-OK "Moderne WSL installiert (Microsoft.WSL)."
+            return $true
+        }
+        Write-WARN "winget install Microsoft.WSL fehlgeschlagen (ExitCode $($proc.ExitCode))."
+        return $false
+    } catch {
+        Write-WARN "winget-Aufruf fehlgeschlagen: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+# Stellt sicher, dass die moderne Store-WSL2 installiert ist (Docker-Desktop-
+# Voraussetzung). Wenn WSL ganz fehlt ODER nur die alte Inbox-WSL vorhanden
+# ist (kein 'wsl --version'/'--update'), wird Microsoft.WSL per winget
+# nachinstalliert. Auf bereits modernen Systemen passiert ohne -UpdateWsl
+# nichts (Auto-Update kann laufende Distros killen).
+function Ensure-WSL {
+    $wslBin = Get-Command wsl -ErrorAction SilentlyContinue
+
+    if (-not $wslBin) {
+        Write-WARN "WSL nicht im PATH — installiere moderne WSL via winget."
+        if (Install-ModernWSL) {
+            Write-WARN "WSL wurde installiert. Falls Windows einen Neustart anfordert, bitte rebooten und Launcher erneut aufrufen."
+            return $true
+        }
+        Write-WARN "WSL-Installation fehlgeschlagen. Docker Desktop benoetigt WSL2."
+        return $false
+    }
+
+    if (-not (Test-ModernWSL)) {
+        Write-WARN "Veraltete Inbox-WSL erkannt ($($wslBin.Source))."
+        Write-WARN "Diese Version unterstuetzt weder 'wsl --version' noch 'wsl --update' — Docker Desktop wird damit nicht zuverlaessig starten."
+        if (Install-ModernWSL) {
+            Write-WARN "Bitte das Terminal komplett schliessen und den Launcher erneut aufrufen, damit das aktualisierte wsl.exe greift."
+            Write-WARN "Falls Windows nach einem Neustart fragt: rebooten und danach erneut starten."
+            exit 0
+        }
+        Write-WARN "Upgrade der Inbox-WSL fehlgeschlagen. Bitte manuell: winget install --id Microsoft.WSL -e"
+        return $false
+    }
+
+    # Moderne WSL ist installiert. KEIN automatisches 'wsl --update' mehr:
     # das hat in der Praxis laufende Distros (insb. die von Docker Desktop)
     # abrupt beendet und Docker in einen kaputten Zustand gebracht
     # (ERROR_ALREADY_EXISTS beim Re-Import). Wer den Kernel aktualisieren
