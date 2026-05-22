@@ -81,6 +81,69 @@ const textReplacements = [
     ['Claude',                     'Senity'],
 ];
 
+// ─── Spinner-Woerter (Senity) ──────────────────────────────────
+// Ersetzt Claude Codes ~187 englische Arbeits-Gerundien ("Osmosing",
+// "Pondering", ...) durch Senity-eigene Begriffe. Laengenerhaltend:
+// "Original" -> "Custom", rechts mit Spaces auf die Original-Byte-
+// Laenge gepaddet (Space landet AUSSERHALB der Quotes -> gueltiges
+// JSON, der angezeigte String-Wert bleibt sauber). Custom-Wort muss
+// <= Original sein; zu kurze Slots ("Doing" etc.) -> Fallback.
+const SPINNER_ORIGINALS = [
+  "Accomplishing","Actioning","Actualizing","Architecting","Baking","Beaming",
+  "Beboppin'","Befuddling","Billowing","Blanching","Bloviating","Boogieing",
+  "Boondoggling","Booping","Bootstrapping","Brewing","Bunning","Burrowing",
+  "Calculating","Canoodling","Caramelizing","Cascading","Catapulting","Cerebrating",
+  "Channeling","Channelling","Choreographing","Churning","Clauding","Coalescing",
+  "Cogitating","Combobulating","Composing","Computing","Concocting","Considering",
+  "Contemplating","Cooking","Crafting","Creating","Crunching","Crystallizing",
+  "Cultivating","Deciphering","Deliberating","Determining","Dilly-dallying","Discombobulating",
+  "Doing","Doodling","Drizzling","Ebbing","Effecting","Elucidating",
+  "Embellishing","Enchanting","Envisioning","Evaporating","Fermenting","Fiddle-faddling",
+  "Finagling","Flamb\xE9ing","Flibbertigibbeting","Flowing","Flummoxing","Fluttering",
+  "Forging","Forming","Frolicking","Frosting","Gallivanting","Galloping",
+  "Garnishing","Generating","Gesticulating","Germinating","Gitifying","Grooving",
+  "Gusting","Harmonizing","Hashing","Hatching","Herding","Honking",
+  "Hullaballooing","Hyperspacing","Ideating","Imagining","Improvising","Incubating",
+  "Inferring","Infusing","Ionizing","Jitterbugging","Julienning","Kneading",
+  "Leavening","Levitating","Lollygagging","Manifesting","Marinating","Meandering",
+  "Metamorphosing","Misting","Moonwalking","Moseying","Mulling","Mustering",
+  "Musing","Nebulizing","Nesting","Newspapering","Noodling","Nucleating",
+  "Orbiting","Orchestrating","Osmosing","Perambulating","Percolating","Perusing",
+  "Philosophising","Photosynthesizing","Pollinating","Pondering","Pontificating","Pouncing",
+  "Precipitating","Prestidigitating","Processing","Proofing","Propagating","Puttering",
+  "Puzzling","Quantumizing","Razzle-dazzling","Razzmatazzing","Recombobulating","Reticulating",
+  "Roosting","Ruminating","Saut\xE9ing","Scampering","Schlepping","Scurrying",
+  "Seasoning","Shenaniganing","Shimmying","Simmering","Skedaddling","Sketching",
+  "Slithering","Smooshing","Sock-hopping","Spelunking","Spinning","Sprouting",
+  "Stewing","Sublimating","Swirling","Swooping","Symbioting","Synthesizing",
+  "Tempering","Thinking","Thundering","Tinkering","Tomfoolering","Topsy-turvying",
+  "Transfiguring","Transmuting","Twisting","Undulating","Unfurling","Unravelling",
+  "Vibing","Waddling","Wandering","Warping","Whatchamacalliting","Whirlpooling",
+  "Whirring","Whisking","Wibbling","Working","Wrangling","Zesting",
+  "Zigzagging",
+];
+const SPINNER_CUSTOM = [
+  "Zaubern","Lösen","Erschaffen","Kreieren","Optimieren",
+  "Verbessern","Weiterentwickeln","Senitieren","Sinnieren","Kombinieren",
+  "Veredeln","Entschlüsseln","Begeistern","Beschleunigen","Vereinfachen"
+];
+const SPINNER_FALLBACK = "Denkt";
+{
+  const _bl = (s) => Buffer.byteLength(s, "utf8");
+  let _ci = 0;
+  for (const _orig of SPINNER_ORIGINALS) {
+    const _slot = _bl('"' + _orig + '"');
+    let _pick = null;
+    for (let _k = 0; _k < SPINNER_CUSTOM.length; _k++) {
+      const _cand = SPINNER_CUSTOM[(_ci + _k) % SPINNER_CUSTOM.length];
+      if (_bl('"' + _cand + '"') <= _slot) { _pick = _cand; _ci = (_ci + _k + 1) % SPINNER_CUSTOM.length; break; }
+    }
+    if (!_pick && _bl('"' + SPINNER_FALLBACK + '"') <= _slot) _pick = SPINNER_FALLBACK;
+    if (_pick) textReplacements.push(['"' + _orig + '"', '"' + _pick + '"']);
+  }
+}
+
+
 // ─── Farb-Ersetzungen ───────────────────────────────────────────
 // Anthropic-CLI nutzt aktuell genau ein Orange (#da7756 via chalk.hex)
 // plus diverse 256-color und truecolor Codes in legacy-Builds. Wir
