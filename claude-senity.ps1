@@ -13,6 +13,7 @@ param(
     [string]$Model,
     [switch]$Rebuild,
     [switch]$CreateShortcut,
+    [switch]$UpdateWsl,
     [switch]$Help,
     [Parameter(ValueFromRemainingArguments=$true)]
     [string[]]$Rest
@@ -38,6 +39,7 @@ function Get-OriginalLauncherArgs {
     if ($Model)          { $a += '-Model'; $a += $Model }
     if ($Rebuild)        { $a += '-Rebuild' }
     if ($CreateShortcut) { $a += '-CreateShortcut' }
+    if ($UpdateWsl)      { $a += '-UpdateWsl' }
     if ($Help)           { $a += '-Help' }
     if ($Rest)           { $a += $Rest }
     return ,$a
@@ -131,9 +133,27 @@ function Ensure-WSL {
         Write-WARN "WSL wurde installiert. Ein Reboot kann erforderlich sein, bevor Docker Desktop laeuft."
         return $true
     }
-    # WSL ist da, aber ggf. Kernel veraltet (Marco hatte genau das Problem).
-    Write-INFO "Aktualisiere WSL-Kernel ('wsl --update')..."
-    wsl --update 2>&1 | Out-Null
+    # WSL ist installiert. KEIN automatisches 'wsl --update' mehr:
+    # das hat in der Praxis laufende Distros (insb. die von Docker Desktop)
+    # abrupt beendet und Docker in einen kaputten Zustand gebracht
+    # (ERROR_ALREADY_EXISTS beim Re-Import). Wer den Kernel aktualisieren
+    # will, ruft den Launcher einmalig mit '-UpdateWsl' auf.
+    if (-not $UpdateWsl) {
+        Write-DBG "WSL-Update uebersprungen (nutze -UpdateWsl zum Erzwingen)"
+        return $true
+    }
+    Write-INFO "Aktualisiere WSL-Kernel ('wsl --update', max. 120s)..."
+    Write-WARN "Docker Desktop sollte vorher beendet sein, sonst kann die Distro abrupt sterben."
+    $outFile = [System.IO.Path]::GetTempFileName()
+    $errFile = [System.IO.Path]::GetTempFileName()
+    $proc = Start-Process -FilePath "wsl.exe" -ArgumentList "--update" -NoNewWindow -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+    if (-not $proc.WaitForExit(120000)) {
+        try { $proc.Kill() } catch {}
+        Write-WARN "wsl --update Timeout nach 120s, abgebrochen"
+    } else {
+        Write-OK "WSL-Update durchgelaufen"
+    }
+    Remove-Item $outFile,$errFile -ErrorAction SilentlyContinue
     return $true
 }
 
@@ -397,6 +417,7 @@ if ($Help) {
     Write-Host "    --no-yolo          Yolo Mode deaktivieren (Permission-Prompts)" -ForegroundColor White
     Write-Host "    --rebuild          Docker-Image neu bauen (force)" -ForegroundColor White
     Write-Host "    --create-shortcut  Desktop-Verknuepfung erstellen und beenden" -ForegroundColor White
+    Write-Host "    --update-wsl       'wsl --update' einmalig erzwingen (Docker vorher beenden!)" -ForegroundColor White
     Write-Host "    --help             Diese Hilfe" -ForegroundColor White
     Write-Host ""
     exit 0
