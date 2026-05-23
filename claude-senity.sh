@@ -557,7 +557,10 @@ if [[ "$needs_build" == true ]]; then
         exit_error "Dockerfile nicht gefunden: $dockerfile_path"
     fi
     write_info "Starte Image-Build (kann 2-5 Minuten dauern)..."
-    if ! docker build -t senity-claude:latest "$SCRIPT_DIR"; then
+    # Bei -Rebuild ohne Cache bauen, damit alte CRLF-/Layer-Reste sicher weg sind.
+    build_no_cache=()
+    if [[ "$REBUILD" == "true" ]]; then build_no_cache=(--no-cache); fi
+    if ! docker build "${build_no_cache[@]}" -t senity-claude:latest "$SCRIPT_DIR"; then
         exit_error "Image-Build fehlgeschlagen.
   Manueller Versuch: docker build -t senity-claude:latest '$SCRIPT_DIR'"
     fi

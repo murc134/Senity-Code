@@ -888,7 +888,11 @@ if ($needsBuild) {
         Exit-Error "Dockerfile nicht gefunden: $dockerfilePath"
     }
     Write-INFO "Starte Image-Build (kann 2-5 Minuten dauern)..."
-    docker build -t senity-claude:latest "$ScriptDir"
+    # Bei -Rebuild ohne Cache bauen, damit alte CRLF-/Layer-Reste sicher weg sind.
+    $buildArgs = @('build', '-t', 'senity-claude:latest')
+    if ($Rebuild) { $buildArgs += '--no-cache' }
+    $buildArgs += "$ScriptDir"
+    docker @buildArgs
     if ($LASTEXITCODE -ne 0) {
         Exit-Error "Image-Build fehlgeschlagen (Exit $LASTEXITCODE)."
     }
