@@ -36,7 +36,10 @@ RUN SENITY_THEME_FILE=/etc/senity-theme.conf node /tmp/patch-claude-header.js \
 
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 COPY senity-mascot-filter.py /usr/local/bin/senity-mascot-filter
-RUN chmod +x /docker-entrypoint.sh /usr/local/bin/senity-mascot-filter
+# CRLF strippen, falls die Datei auf einem Windows-Host mit core.autocrlf=true
+# ausgecheckt wurde (Shebang scheitert sonst mit 'python3\r': Exit 127).
+RUN sed -i 's/\r$//' /docker-entrypoint.sh /usr/local/bin/senity-mascot-filter \
+    && chmod +x /docker-entrypoint.sh /usr/local/bin/senity-mascot-filter
 
 # Benutzer anlegen (node:22-Image bringt node-User bereits mit)
 RUN id -u node >/dev/null 2>&1 || useradd -m -s /bin/bash node
