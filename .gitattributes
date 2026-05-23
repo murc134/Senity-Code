@@ -7,6 +7,10 @@
 *.sh    text eol=lf
 docker-entrypoint.sh text eol=lf
 
+# Python-Scripts (laufen im Linux-Container, Shebang braucht LF): LF erzwingen
+*.py    text eol=lf
+senity-mascot-filter.py text eol=lf
+
 # Container-Konfig (wird im Image von bash gesourct): LF erzwingen
 *.conf  text eol=lf
 senity-theme.conf text eol=lf
