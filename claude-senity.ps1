@@ -221,7 +221,7 @@ function Enable-WslFeatures {
 function Install-ModernWSL {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         Write-WARN "winget nicht verfuegbar — moderne WSL bitte manuell installieren: https://aka.ms/wsl"
-        return $false
+        return 'failed'
     }
     Write-INFO "Installiere moderne WSL via winget (Paket: Microsoft.WSL)..."
     Write-INFO "Ein UAC-Prompt erscheint. Nach Abschluss kann ein Reboot oder Terminal-Neustart noetig sein."
@@ -240,7 +240,7 @@ function Install-ModernWSL {
 
         if ($rc -eq 0) {
             Write-OK "Moderne WSL installiert (Microsoft.WSL)."
-            return $true
+            return 'installed'
         }
         # 'Bereits installiert / kein Upgrade verfuegbar' ist fuer uns Erfolg.
         # winget meldet das in DE und EN; wir matchen beide Locales.
@@ -253,13 +253,13 @@ function Install-ModernWSL {
                        -or  ($outStr -match 'already installed')
         if ($alreadyInstalled) {
             Write-OK "Microsoft.WSL ist bereits installiert (winget: kein Upgrade noetig, ExitCode $rc)."
-            return $true
+            return 'already'
         }
         Write-WARN "winget install Microsoft.WSL fehlgeschlagen (ExitCode $rc)."
-        return $false
+        return 'failed'
     } catch {
         Write-WARN "winget-Aufruf fehlgeschlagen: $($_.Exception.Message)"
-        return $false
+        return 'failed'
     } finally {
         Remove-Item $outFile,$errFile -ErrorAction SilentlyContinue
     }
@@ -291,12 +291,25 @@ function Ensure-WSL {
         #    Builds nicht, wenn die Features schon aktiv sind.
         # 2) winget zieht die moderne Store-WSL (Paket Microsoft.WSL),
         #    loest die Inbox-Variante ab.
-        $featuresOk = Enable-WslFeatures
-        $wingetOk   = Install-ModernWSL
+        $featuresOk  = Enable-WslFeatures
+        $wingetState = Install-ModernWSL   # 'installed' | 'already' | 'failed' | $false
 
-        if ($featuresOk -or $wingetOk) {
+        # 'already' = Microsoft.WSL ist bereits drauf. Wenn parallel die
+        # Features schon aktiv waren (dism No-Op) und 'wsl --version' jetzt
+        # antwortet, ist nichts zu rebooten — wir laufen einfach weiter.
+        if ($wingetState -eq 'already' -and (Test-ModernWSL)) {
+            Write-OK "Moderne WSL ist bereits einsatzbereit (kein Reboot noetig)."
+            return $true
+        }
+
+        if ($wingetState -eq 'installed' -or ($wingetState -eq 'already' -and $featuresOk)) {
             Write-WARN "WSL-Setup angestossen. Bitte Windows NEU STARTEN und den Launcher danach erneut aufrufen."
             Write-WARN "Ohne Reboot greift die Feature-Aktivierung nicht und Docker Desktop wird nicht starten."
+            exit 0
+        }
+
+        if ($featuresOk) {
+            Write-WARN "Windows-Features fuer WSL2 wurden aktiviert. Bitte Windows NEU STARTEN und den Launcher danach erneut aufrufen."
             exit 0
         }
 

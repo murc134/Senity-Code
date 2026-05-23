@@ -115,16 +115,29 @@ set "EXITCODE=%ERRORLEVEL%"
 endlocal & set "EXITCODE=%EXITCODE%"
 
 echo.
-if %EXITCODE% EQU 0 (
-    echo   [OK]   Senity Workspace beendet (Exit 0)
-) else if %EXITCODE% EQU 130 (
-    echo   [OK]   Beendet durch Ctrl+C
-) else (
-    echo   [FAIL] Script beendet mit Exit-Code: %EXITCODE%
-    echo   [INFO] Bitte Ausgabe oben auf Fehlermeldungen pruefen.
-    echo.
-    echo   Druecke eine Taste zum Schliessen...
-    pause >nul
-)
+rem Unescaped ')' im echo-Text wuerde cmd.exe's if/else-Parser brechen
+rem (z.B. "(Exit 0)" schliesst den if-Block vorzeitig). Deshalb Verzweigung
+rem ueber goto-Labels statt if (...) else (...).
+if %EXITCODE% EQU 0   goto :status_ok
+if %EXITCODE% EQU 130 goto :status_ctrlc
+goto :status_fail
+
+:status_ok
+echo   [OK]   Senity Workspace beendet ^(Exit 0^)
+goto :status_done
+
+:status_ctrlc
+echo   [OK]   Beendet durch Ctrl+C
+goto :status_done
+
+:status_fail
+echo   [FAIL] Script beendet mit Exit-Code: %EXITCODE%
+echo   [INFO] Bitte Ausgabe oben auf Fehlermeldungen pruefen.
+echo.
+echo   Druecke eine Taste zum Schliessen...
+pause >nul
+goto :status_done
+
+:status_done
 
 endlocal & exit /b %EXITCODE%
