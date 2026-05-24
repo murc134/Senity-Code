@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Senity CLI — User Guide</title>
+<style>
+  :root {
+    --primary:   #875faf;
+    --secondary: #af87ff;
+    --accent:    #ff00af;
+    --bg:        #ffffff;
+    --bg-soft:   #f7f4fb;
+    --fg:        #1a1626;
+    --fg-mute:   #5a5168;
+    --border:    #e5dcef;
+    --code-bg:   #1f1a2a;
+    --code-fg:   #e8e2f3;
+  }
+
+  @page {
+    size: A4;
+    margin: 18mm 16mm 22mm 16mm;
+    @bottom-right { content: "Seite " counter(page) " / " counter(pages); }
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.55;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Cover -------------------------------------------------------------- */
+  .cover {
+    height: 257mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    page-break-after: always;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 60%, var(--accent) 100%);
+    color: #fff;
+    padding: 28mm 22mm 18mm 22mm;
+    border-radius: 0;
+  }
+  .cover .brand {
+    font-size: 12pt;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    opacity: 0.85;
+  }
+  .cover h1 {
+    font-size: 42pt;
+    font-weight: 800;
+    margin: 6mm 0 0 0;
+    line-height: 1.05;
+    letter-spacing: -1px;
+  }
+  .cover .sub {
+    font-size: 16pt;
+    margin-top: 6mm;
+    opacity: 0.95;
+    font-weight: 300;
+  }
+  .cover .meta {
+    font-size: 9.5pt;
+    opacity: 0.85;
+    border-top: 1px solid rgba(255,255,255,0.4);
+    padding-top: 4mm;
+  }
+  .cover .meta div { margin: 1.5mm 0; }
+  .cover .accent-bar {
+    width: 60mm;
+    height: 4px;
+    background: #fff;
+    margin: 8mm 0 4mm 0;
+    border-radius: 2px;
+  }
+
+  /* Body -------------------------------------------------------------- */
+  h1, h2, h3, h4 { color: var(--primary); font-weight: 700; }
+  h1 { font-size: 22pt; margin: 0 0 6mm 0; border-bottom: 3px solid var(--primary); padding-bottom: 2mm; }
+  h2 {
+    font-size: 15pt;
+    margin: 10mm 0 4mm 0;
+    padding-left: 4mm;
+    border-left: 4px solid var(--accent);
+    page-break-after: avoid;
+  }
+  h3 { font-size: 12pt; margin: 6mm 0 2mm 0; color: var(--secondary); }
+  h4 { font-size: 10.5pt; margin: 4mm 0 1mm 0; color: var(--fg); }
+
+  p { margin: 0 0 3mm 0; }
+  ul, ol { margin: 0 0 3mm 0; padding-left: 6mm; }
+  li { margin: 1mm 0; }
+
+  a { color: var(--accent); text-decoration: none; }
+  a::after { content: " (" attr(href) ")"; font-size: 8.5pt; color: var(--fg-mute); }
+  a.plain::after { content: ""; }
+
+  /* Code -------------------------------------------------------------- */
+  code {
+    background: var(--bg-soft);
+    color: var(--primary);
+    padding: 0.5mm 1.5mm;
+    border-radius: 2mm;
+    font-family: "Cascadia Mono", "Fira Code", Consolas, monospace;
+    font-size: 9.5pt;
+    border: 1px solid var(--border);
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 4mm 5mm;
+    border-radius: 3mm;
+    overflow-x: auto;
+    font-family: "Cascadia Mono", "Fira Code", Consolas, monospace;
+    font-size: 9pt;
+    line-height: 1.45;
+    border-left: 4px solid var(--accent);
+    page-break-inside: avoid;
+    margin: 2mm 0 4mm 0;
+  }
+  pre code { background: none; color: inherit; border: none; padding: 0; }
+
+  /* Tables ------------------------------------------------------------ */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 3mm 0 5mm 0;
+    font-size: 9.5pt;
+    page-break-inside: avoid;
+  }
+  th {
+    background: var(--primary);
+    color: #fff;
+    text-align: left;
+    padding: 2mm 3mm;
+    font-weight: 600;
+  }
+  td {
+    padding: 1.8mm 3mm;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: var(--bg-soft); }
+
+  /* Callouts ---------------------------------------------------------- */
+  .callout {
+    border-left: 4px solid var(--secondary);
+    background: var(--bg-soft);
+    padding: 3mm 4mm;
+    border-radius: 2mm;
+    margin: 3mm 0 4mm 0;
+    page-break-inside: avoid;
+  }
+  .callout.warn { border-left-color: var(--accent); }
+  .callout.tip  { border-left-color: var(--primary); }
+  .callout strong { color: var(--primary); }
+
+  /* Page utilities ---------------------------------------------------- */
+  .page-break { page-break-before: always; }
+
+  header.section-header {
+    color: var(--fg-mute);
+    font-size: 9pt;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 2mm;
+  }
+
+  footer.brand-footer {
+    margin-top: 14mm;
+    padding-top: 3mm;
+    border-top: 1px solid var(--border);
+    color: var(--fg-mute);
+    font-size: 8.5pt;
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+
+<!-- COVER -->
+<section class="cover">
+  <div>
+    <div class="brand">SENITY</div>
+    <div class="accent-bar"></div>
+    <h1>Senity CLI</h1>
+    <div class="sub">Globaler <code style="background:rgba(255,255,255,0.15);color:#fff;border:none">senity</code>-Befehl fuer den Senity-Workspace-Container</div>
+  </div>
+  <div class="meta">
+    <div><strong>Version</strong> 1.0 — User Guide</div>
+    <div><strong>Stand</strong> Mai 2026</div>
+    <div><strong>Ziel</strong> Onboarding, Installation, Alltagsgebrauch</div>
+    <div><strong>Tickets</strong> #1030 / #1041</div>
+  </div>
+</section>
+
+<!-- TOC -->
+<header class="section-header">Inhalt</header>
+<h1>Uebersicht</h1>
+<ol>
+  <li>Was ist die Senity CLI?</li>
+  <li>Installation</li>
+  <li>Erst-Login</li>
+  <li>Alltagsgebrauch</li>
+  <li>Optionen und Flags</li>
+  <li>Default-Verhalten</li>
+  <li>Konfiguration</li>
+  <li>Parallele Sessions</li>
+  <li>Update</li>
+  <li>Troubleshooting</li>
+  <li>Abgrenzung zum klassischen Workspace</li>
+</ol>
+
+<!-- 1 -->
+<h2>1. Was ist die Senity CLI?</h2>
+<p>
+Die Senity CLI stellt einen globalen Befehl <code>senity</code> bereit, der den
+Senity-Workspace-Container ad-hoc startet und das aktuelle Arbeitsverzeichnis
+als <code>/workspace/cwd</code> in den Container mountet. Vorbild sind die CLIs
+<code>claude</code>, <code>codex</code> und <code>gemini</code>.
+</p>
+<p>
+Use-Case: irgendwo im Dateisystem <code>cd projekt-x</code>, dann
+<code>senity</code> tippen, in der Senity-Claude-Session landen, am Code
+arbeiten, beim Exit verschwindet der Container, der Ordner bleibt unveraendert.
+</p>
+
+<div class="callout tip">
+<strong>Wann nutzen?</strong> Spontane Sessions in fremden Projekt-Ordnern, schnelle Demos,
+Onboarding neuer Teammitglieder. Fuer persistente Multi-Repo-Workspaces mit eigener
+<code>.bindings</code>-Konfiguration bleibt der klassische
+<code>claude-senity.sh</code>/<code>.bat</code>-Launcher das richtige Werkzeug.
+</div>
+
+<!-- 2 -->
+<h2>2. Installation</h2>
+
+<h3>Linux / macOS</h3>
+<pre><code>curl -fsSL https://git.senity.ai/senity-admin/senity-code/raw/branch/main/senity-cli/install.sh | bash</code></pre>
+
+<p>
+Installiert nach <code>~/.local/bin/senity</code>. Liegt der Pfad nicht im
+<code>PATH</code>, gibt der Installer die noetige Zeile fuer
+<code>~/.bashrc</code> oder <code>~/.zshrc</code> aus.
+</p>
+
+<h3>Windows (PowerShell 7+)</h3>
+<pre><code>irm https://git.senity.ai/senity-admin/senity-code/raw/branch/main/senity-cli/install.ps1 | iex</code></pre>
+
+<p>
+Installiert nach <code>%USERPROFILE%\.senity\bin\senity.ps1</code> und legt
+einen <code>senity.bat</code>-Shim fuer <code>cmd.exe</code> an. Der User-PATH
+wird automatisch erweitert. Danach eine neue Shell oeffnen.
+</p>
+
+<h3>Voraussetzungen</h3>
+<table>
+  <tr><th>Komponente</th><th>Pruefung</th><th>Installation</th></tr>
+  <tr><td>Docker Desktop / docker-engine</td><td><code>docker info</code></td><td>winget / brew / docs.docker.com</td></tr>
+  <tr><td>git (fuer Skill-Cache)</td><td><code>git --version</code></td><td>OS-Paketmanager</td></tr>
+  <tr><td>SSH-Key fuer Skill-Repos</td><td><code>ssh -T git@github.com</code></td><td>siehe Senity-Admin</td></tr>
+  <tr><td>Bash bzw. PowerShell 7+</td><td><code>bash --version</code> / <code>pwsh --version</code></td><td>OS-Default bzw. winget</td></tr>
+</table>
+
+<!-- 3 -->
+<h2>3. Erst-Login</h2>
+<pre><code>senity login</code></pre>
+<p>
+Fragt nach Senity-Proxy-URL und Proxy-Key, schreibt nach
+<code>~/.senity/.env</code> (Mode 600 auf Unix). Die URL hat den Default
+<code>https://sdr.senity.ai/api/claude-proxy</code>. Den Key liefert der
+Senity-Admin.
+</p>
+
+<div class="callout warn">
+<strong>Sicherheit.</strong> Der Key landet im Klartext in <code>~/.senity/.env</code>.
+Verzeichnis-Berechtigung ist <code>0700</code>, Datei <code>0600</code>. Niemals
+einchecken, niemals weitergeben.
+</div>
+
+<!-- 4 -->
+<h2>4. Alltagsgebrauch</h2>
+<pre><code>cd ~/projekte/foo
+senity</code></pre>
+
+<p>
+Beim ersten Aufruf laeuft ein Auto-Update (Docker-Image pullen, Skills /
+Commands / Agents / MCPs klonen). Danach startet der Container, mountet
+<code>~/projekte/foo</code> als <code>/workspace/cwd</code> und startet die
+Senity-Claude-Session. Beim Exit ist der Container weg.
+</p>
+
+<h3>Zusatz-Mounts</h3>
+<pre><code>senity --mount ~/.gitconfig:/workspace/.gitconfig:ro
+senity --mount /data/shared:/workspace/shared</code></pre>
+
+<h3>Spezifisches Image-Tag</h3>
+<pre><code>senity --image git.senity.ai/senity-admin/senity-code:1.4.2</code></pre>
+
+<!-- 5 -->
+<h2>5. Optionen und Flags</h2>
+<table>
+  <tr><th>Bash / Shell</th><th>PowerShell</th><th>Wirkung</th></tr>
+  <tr><td><code>--skip-update</code></td><td><code>-SkipUpdate</code></td><td>Ueberspringt Docker- und Skill-Updates</td></tr>
+  <tr><td><code>--no-yolo</code></td><td><code>-NoYolo</code></td><td>Permission-Prompts aktivieren</td></tr>
+  <tr><td><code>--yolo</code></td><td><code>-Yolo</code></td><td>Yolo explizit an (Default)</td></tr>
+  <tr><td><code>--mount H:C[:ro]</code></td><td><code>-Mount H:C[:ro]</code></td><td>Zusatz-Mount, mehrfach erlaubt</td></tr>
+  <tr><td><code>--image &lt;ref&gt;</code></td><td><code>-Image &lt;ref&gt;</code></td><td>Image-Tag ueberschreiben</td></tr>
+  <tr><td><code>--help</code> / <code>-h</code></td><td><code>-h</code></td><td>Hilfe</td></tr>
+  <tr><td><code>login</code> (Subcommand)</td><td><code>login</code> (Subcommand)</td><td>Proxy-Key einrichten</td></tr>
+</table>
+
+<!-- 6 -->
+<h2 class="page-break">6. Default-Verhalten</h2>
+<table>
+  <tr><th>Schritt</th><th>Default</th><th>Skip</th></tr>
+  <tr><td>Docker-Image pullen</td><td>bei jedem Start</td><td><code>--skip-update</code></td></tr>
+  <tr><td>Skills / Commands / Agents pullen</td><td>bei jedem Start</td><td><code>--skip-update</code></td></tr>
+  <tr><td>MCP-Server pullen</td><td>bei jedem Start</td><td><code>--skip-update</code></td></tr>
+  <tr><td>Yolo-Mode</td><td>an</td><td><code>--no-yolo</code></td></tr>
+  <tr><td>Workspace-HOME</td><td><code>~/.senity/workspace</code> &rarr; <code>/workspace</code></td><td>n/a</td></tr>
+  <tr><td>cwd-Mount</td><td><code>$(pwd)</code> &rarr; <code>/workspace/cwd</code></td><td>n/a</td></tr>
+  <tr><td>MCP-User-Config</td><td><code>~/.senity/mcp-config.json</code> (optional)</td><td>n/a</td></tr>
+  <tr><td>SSH-Keys</td><td><code>~/.ssh</code> read-only gemountet</td><td>n/a</td></tr>
+</table>
+
+<div class="callout">
+<strong>Update-Default-Philosophie.</strong> Auto-Update laeuft bei jedem Aufruf.
+Das spart das manuelle <code>senity --update</code>-Subcommand und garantiert, dass jede
+Session den aktuellen Skill- und Image-Stand sieht. Power-User koennen mit
+<code>--skip-update</code> bewusst offline arbeiten.
+</div>
+
+<!-- 7 -->
+<h2>7. Konfiguration</h2>
+<p>
+Alle CLI-Daten liegen unter <code>~/.senity/</code>:
+</p>
+
+<pre><code>~/.senity/
++-- .env                 # SENITY_CHAT_PROXY_URL + KEY (chmod 600)
++-- mcp-config.json      # optional, User-globale MCP-Server
++-- workspace/           # persistentes /workspace (Claude-Settings, Codex-Tokens, ...)
++-- cache/
+    +-- skills/          # Klon von murc134/Claude-Skills
+    +-- commands/        # Klon von murc134/Claude-Commands
+    +-- agents/          # Klon von murc134/Claude-Agents
+    +-- senity-mcps/     # Klon von senity/senity-mcps</code></pre>
+
+<h3>MCP-Server konfigurieren</h3>
+<p>
+Eigene MCP-Server oder Token-Overrides legt der User in
+<code>~/.senity/mcp-config.json</code> ab. Format und Beispiel siehe
+<code>mcp-config.example.json</code> im Hauptrepo. Datei wird beim Start
+read-only in den Container gemountet und mit den Repo-Defaults gemergt.
+</p>
+
+<!-- 8 -->
+<h2>8. Parallele Sessions</h2>
+<p>
+Jeder Aufruf bekommt einen eigenen Container-Namen
+<code>senity-&lt;pid&gt;-&lt;epoch&gt;</code>. Mehrere Terminals koennen ohne
+Konflikt parallel <code>senity</code> aufrufen, jeder bekommt seinen eigenen
+Container. Beim Exit verschwinden alle (<code>--rm</code>).
+</p>
+<p>
+Der gemeinsame Mount <code>~/.senity/workspace</code> ist read-write fuer
+beide Sessions. Vorsicht bei gleichzeitiger Aenderung derselben Settings-Datei,
+last-write-wins.
+</p>
+
+<!-- 9 -->
+<h2>9. Update</h2>
+<p>
+Die Wrapper-Skripts updaten sich selbst nicht automatisch. Re-Run des
+Installers ueberschreibt das Script, Cache und <code>.env</code> bleiben:
+</p>
+<pre><code># Linux / macOS
+curl -fsSL https://git.senity.ai/senity-admin/senity-code/raw/branch/main/senity-cli/install.sh | bash
+
+# Windows
+irm https://git.senity.ai/senity-admin/senity-code/raw/branch/main/senity-cli/install.ps1 | iex</code></pre>
+
+<!-- 10 -->
+<h2>10. Troubleshooting</h2>
+
+<h3>"Image fehlt und --skip-update verhindert Pull"</h3>
+<p>Aufruf ohne <code>--skip-update</code> wiederholen, der Erstaufruf braucht einen Pull.</p>
+
+<h3>"docker pull fehlgeschlagen ... 401 Unauthorized"</h3>
+<p>
+Einmalig <code>docker login git.senity.ai</code>. Username = Gitea-User,
+Passwort = Personal Access Token mit Scope <code>read:package</code>
+(Gitea: User Settings -&gt; Applications -&gt; Generate New Token).
+</p>
+
+<h3>"SENITY_CHAT_PROXY_KEY fehlt"</h3>
+<p><code>senity login</code> ausfuehren.</p>
+
+<h3>Skills oder Commands fehlen im Container</h3>
+<p>
+Auto-Update braucht SSH-Zugriff auf die Repos. SSH-Agent / Key in
+<code>~/.ssh/config</code> pruefen. <code>--skip-update</code> nutzt den letzten
+erfolgreichen Cache-Stand.
+</p>
+
+<h3>Permission-Probleme auf Windows</h3>
+<p>
+Falls <code>senity.ps1</code> nicht startet:
+<code>Set-ExecutionPolicy -Scope CurrentUser RemoteSigned</code>. Der
+<code>.bat</code>-Shim ruft pwsh mit <code>-ExecutionPolicy Bypass</code> auf,
+fuer cmd.exe ist das transparent.
+</p>
+
+<!-- 11 -->
+<h2>11. Abgrenzung zum klassischen Workspace</h2>
+<table>
+  <tr><th>Aspekt</th><th><code>senity</code> (Ad-hoc)</th><th><code>claude-senity</code> (klassisch)</th></tr>
+  <tr><td>Setup</td><td>installer + <code>senity login</code></td><td>Repo klonen + <code>.env</code></td></tr>
+  <tr><td>Workspace</td><td>cwd des Aufrufs</td><td>festes <code>workspace/</code> im Repo</td></tr>
+  <tr><td>Mounts</td><td>einer (cwd) + optionale CLI-Flags</td><td>via <code>.bindings</code>-Datei</td></tr>
+  <tr><td>Projekt-Repos</td><td>nicht persistent</td><td>persistent unter <code>workspace/projects/</code></td></tr>
+  <tr><td>Initial Prompt</td><td>keiner</td><td><code>INITIAL_PROMPT.md</code></td></tr>
+  <tr><td>Lifecycle</td><td>pro Aufruf, <code>--rm</code></td><td>langlebige Sessions</td></tr>
+  <tr><td>Use-Case</td><td>spontan im fremden Ordner</td><td>Entwickler-Daily-Workspace</td></tr>
+</table>
+
+<footer class="brand-footer">
+  <span>Senity Workspace &middot; CLI User Guide v1.0</span>
+  <span>git.senity.ai/senity-admin/senity-code</span>
+</footer>
+
+</body>
+</html>

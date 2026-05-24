@@ -283,3 +283,16 @@ per Comment "Thema abgeschlossen, Folgeticket #X" schließen und neues anlegen.
 
 **Em-Dash-Verbot in Kommentaren:** niemals `—` verwenden (Comments sind nach
 Submit nicht editierbar). Stattdessen Komma, Doppelpunkt oder Klammern.
+
+---
+
+## Worktree / Branch im Ticket (Pflicht, ab 2026-05-24)
+
+Diese Regel gilt projektübergreifend für alle Tickets im zentralen Senity-Ticketing (`https://ticketing.senity.ai`). Sie ergänzt die bestehende Origin-Tracking-Konvention.
+
+Jedes Ticket trägt zusätzlich:
+
+- **`metadata.branch`** (Pflicht, sobald Status `in_progress` oder `review`): exakter Branch-Name (z.B. `feat/sts-1035-relations`). Wechselt das Ticket auf `in_progress` ohne gesetzten Branch, gibt das Tool einen Fehler aus.
+- **`metadata.worktree`** (optional, empfohlen): absoluter Pfad zum Git-Worktree (z.B. `D:/Devel/.worktrees/sts-1035`). Fehlt das Feld, wird nur eine Warning ausgegeben.
+
+Aus dem Worktree ist der Branch via `git rev-parse --abbrev-ref HEAD` ableitbar. Bestehende Tickets bekommen die Felder nachgezogen, sobald sie aktiv bearbeitet werden. Schema-Promotion in eigene Spalten ist Teil von STS-1035 (Ticket-Schema-Evolution).

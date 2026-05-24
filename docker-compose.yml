@@ -1,0 +1,45 @@
+services:
+  senity-code:
+    # Image kommt aus der Gitea-Registry. Tag in .env ueberschreibbar (SENITY_IMAGE_TAG).
+    image: git.senity.ai/senity-admin/senity-code:${SENITY_IMAGE_TAG:-latest}
+    container_name: senity-code
+    hostname: senity-code
+
+    # Persistenter Daemon: Container laeuft im Hintergrund.
+    # Interaktive Sessions via `docker compose exec senity-code senity-mascot-filter claude`.
+    command: ["sleep", "infinity"]
+    restart: unless-stopped
+
+    stdin_open: true
+    tty: true
+
+    environment:
+      SENITY_CHAT_PROXY_URL: ${SENITY_CHAT_PROXY_URL}
+      SENITY_CHAT_PROXY_KEY: ${SENITY_CHAT_PROXY_KEY}
+      ANTHROPIC_BASE_URL:    ${SENITY_CHAT_PROXY_URL}
+      ANTHROPIC_AUTH_TOKEN:  ${SENITY_CHAT_PROXY_KEY}
+
+    volumes:
+      # /workspace ist die HOME-aequivalente persistente Schicht (Claude-Settings,
+      # Codex-/Gemini-Tokens, Skill-Cache, Projekt-Repos).
+      - ./workspace:/workspace
+
+      # SSH-Keys read-only fuer Git-Pulls innerhalb des Containers (skills/MCPs).
+      - ${HOME:-${USERPROFILE}}/.ssh:/home/node/.ssh:ro
+
+      # Optionale User-MCP-Config (z.B. Asana-/Trello-/Ticketing-Token).
+      # Existiert die Datei nicht, schlaegt der Mount fehl; dann auskommentieren.
+      # - ./mcp-config.json:/workspace/.mcp-config.json:ro
+
+    # Bind-only auf localhost, keine externen Ports.
+    # Wer einen Skill mit HTTP-Server braucht (z.B. Dev-Server), unter `ports:`
+    # explizit `127.0.0.1:PORT:PORT` ergaenzen.
+    ports: []
+
+    # Resource-Limits sind sinnvolle Defaults, gerne ueberschreiben.
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
