@@ -235,3 +235,51 @@ server-seitig gegen den User-Account.
     abgeschossen, ERROR_ALREADY_EXISTS beim Re-Import).
   Docker Desktop bzw. WSL-Install können beim ersten Start einen Reboot
   erzwingen. `npm`/`npx` braucht nur der Container (im Image), nicht der Host.
+
+
+---
+
+## Konversations-Tickets (Pflicht, reaffirmed 2026-05-24)
+
+Jede Konversation wird im zentralen Senity-Ticketing dokumentiert, damit Marco, Timo
+und alle anderen Team-Mitglieder Diskussionen, Entscheidungen und Trade-offs ohne
+Beisein des Users oder von mir nachvollziehen können. Zugriff via
+`mcp__ticketing__*`-Tools.
+
+**Default:** Jede neue Aufgabe, Frage oder Diagnose bekommt ein Ticket. Lieber zu
+viel dokumentieren als zu wenig. Diese Regel überschreibt frühere
+"Triviale Fixes ohne Ticket"-Konventionen.
+
+**Vor `create_ticket` immer prüfen:** `mcp__ticketing__list_tickets` mit
+`q=<Stichworte>` und `project_key=<KEY>`. Wenn ein offenes Ticket zum Thema
+existiert: dort kommentieren statt neu anlegen, dem User Code/ID nennen.
+
+**Beim Erstellen setzen:** `project_key`, `type_code` (FEAT/BUG/CHO/IMP/RESEARCH/EPIC),
+`priority_code` (P2 default, P3 für "nicht jetzt"), `status_code` (`in_progress`
+wenn aktiv, `draft` für reine Diskussion, `backlog` für vertagt).
+
+**Live-Kommentare während der Konversation (Pflicht) bei:**
+
+- User-Entscheidungen, Klarstellungen, neue Anforderungen, Korrekturen.
+- Architektur-Vorschläge mit Trade-offs.
+- Verworfene Alternativen mit Begründung.
+- Recherche-Ergebnisse, Funde im Code, Verweise auf Memory/Ticket/File.
+- Pain Points und Lessons Learned aus der Diskussion.
+
+**Comment-Format:**
+
+    [YYYY-MM-DD HH:MM] **User:** <Zitat oder Paraphrase>
+
+    **Claude:** <Empfehlung / Recherche / Folgeschritt>
+
+    Refs: #<ticket>, [[memory-name]], path:line
+
+**Nicht als Comment:** Tool-Output-Echos, Status-Pings ("starte X", "lese Y"),
+triviale Bestätigungen ("ok", "verstanden"), Routine-Implementierungs-Schritte
+ohne Entscheidungscharakter.
+
+**Themen-Wechsel:** sobald erkennbar dass ein neues Thema beginnt, altes Ticket
+per Comment "Thema abgeschlossen, Folgeticket #X" schließen und neues anlegen.
+
+**Em-Dash-Verbot in Kommentaren:** niemals `—` verwenden (Comments sind nach
+Submit nicht editierbar). Stattdessen Komma, Doppelpunkt oder Klammern.
