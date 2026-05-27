@@ -296,3 +296,14 @@ Jedes Ticket trägt zusätzlich:
 - **`metadata.worktree`** (optional, empfohlen): absoluter Pfad zum Git-Worktree (z.B. `D:/Devel/.worktrees/sts-1035`). Fehlt das Feld, wird nur eine Warning ausgegeben.
 
 Aus dem Worktree ist der Branch via `git rev-parse --abbrev-ref HEAD` ableitbar. Bestehende Tickets bekommen die Felder nachgezogen, sobald sie aktiv bearbeitet werden. Schema-Promotion in eigene Spalten ist Teil von STS-1035 (Ticket-Schema-Evolution).
+
+
+---
+
+## KNOWLEDGE-Capture (Pflicht)
+
+Jeder gelöste Fehler, jede verstandene Tool-/Library-/Plattform-Eigenheit und jede korrigierte falsche Annahme wird als KNOWLEDGE-Ticket im zentralen Senity-Ticketing (`type_code=KNOWLEDGE`, `status_code=open`) festgehalten. Vor Task-Start mit `mcp__ticketing__list_tickets type_code=KNOWLEDGE q=<symptom>` nach existierendem Wissen suchen.
+
+**Implementierung:** Skill `knowledge-capture` (`~/.claude/skills/knowledge-capture/SKILL.md`) erzwingt zwei Modi: (1) Lookup vor Task-Start bei Fehler-Symptomen, (2) Capture nach jeder Problemlösung. Aggressiv triggern, nicht selbst-zensieren. Body-Template (Problem, Lösung, Grund, Refs) und Title-Konvention dort definiert.
+
+Globale Quelle: `~/.claude/CLAUDE.md` Sektion "KNOWLEDGE-Ticket-Workflow" (Zeile 85ff).
