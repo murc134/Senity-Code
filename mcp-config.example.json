@@ -8,6 +8,24 @@
       }
     },
 
+    "mail": {
+      "_hinweis_": "IMAP-Block (lesen) und SMTP-Block (senden) sind unabhaengig optional: nur IMAP fuer read-only, nur SMTP fuer send-only, oder beides. Ein halb gefuellter Block bricht beim Start ab (fail-loud). MAIL_ALLOWED_RECIPIENT_DOMAINS leer = Senden unrestricted (Anti-Exfil-Warnung beim Start). In jedem Deployment mit Internet-Zugang IMMER setzen.",
+      "env": {
+        "IMAP_HOST": "imap.example.de",
+        "IMAP_PORT": "993",
+        "IMAP_USER": "bot@example.de",
+        "IMAP_PASSWORD": "DEIN_IMAP_PASSWORT",
+        "IMAP_TLS": "true",
+        "SMTP_HOST": "smtp.example.de",
+        "SMTP_PORT": "465",
+        "SMTP_USER": "bot@example.de",
+        "SMTP_PASSWORD": "DEIN_SMTP_PASSWORT",
+        "SMTP_SECURE": "true",
+        "MAIL_FROM": "Senity Bot <bot@example.de>",
+        "MAIL_ALLOWED_RECIPIENT_DOMAINS": "senity.ai"
+      }
+    },
+
     "asana": {
       "env": {
         "ASANA_ACCESS_TOKEN": "DEIN_PERSONAL_ACCESS_TOKEN"
