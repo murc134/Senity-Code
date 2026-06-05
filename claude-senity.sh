@@ -246,7 +246,7 @@ launcher_self_update() {
         if [[ -n "$new_head" && -n "$old_head" && "$new_head" != "$old_head" ]]; then
             write_ok "Launcher aktualisiert (${old_head:0:7} -> ${new_head:0:7}). Re-Start mit neuer Version..."
             export SENITY_SELF_UPDATE_DONE=1
-            exec "$0" "${ORIGINAL_ARGS[@]}"
+            exec "$0" ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}
         fi
         write_ok "Launcher ist aktuell"
         return 0
@@ -564,7 +564,7 @@ if [[ "$needs_build" == true ]]; then
     # Bei -Rebuild ohne Cache bauen, damit alte CRLF-/Layer-Reste sicher weg sind.
     build_no_cache=()
     if [[ "$REBUILD" == "true" ]]; then build_no_cache=(--no-cache); fi
-    if ! docker build "${build_no_cache[@]}" -t senity-claude:latest "$SCRIPT_DIR"; then
+    if ! docker build ${build_no_cache[@]+"${build_no_cache[@]}"} -t senity-claude:latest "$SCRIPT_DIR"; then
         exit_error "Image-Build fehlgeschlagen.
   Manueller Versuch: docker build -t senity-claude:latest '$SCRIPT_DIR'"
     fi
@@ -1061,7 +1061,7 @@ append_exclude_overlays() {
                 DOCKER_ARGS+=(-v "${empty_file}:${cbase}/${rel}:ro")
             fi
             overlay_count=$((overlay_count + 1))
-        done < <(find "$src" "${maxdepth_arg[@]}" -name "$name" -print0 2>/dev/null)
+        done < <(find "$src" ${maxdepth_arg[@]+"${maxdepth_arg[@]}"} -name "$name" -print0 2>/dev/null)
     done
     local cnt
     cnt=$(wc -l < "$seen_file" | tr -d ' ')
