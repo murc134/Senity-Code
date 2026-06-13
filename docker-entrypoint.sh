@@ -99,17 +99,16 @@ fi
 # Skip wenn kein TTY oder SENITY_NO_BANNER gesetzt.
 if [[ -t 1 && -z "${SENITY_NO_BANNER:-}" ]]; then
     ESC=$'\033'
-    FACE="${ESC}[1;38;5;255m"                # weiss bold (SENITY Block-Letters)
-    GLOW="${ESC}[38;5;${ACCENT_256}m"        # Pink-Glow (~ Brain-Glow)
-    BRAIN="${ESC}[38;5;${PRIMARY_256}m"      # Lila (= Brain-Outline)
-    NODE_PINK="${ESC}[38;5;${ACCENT_256}m"   # Dot-Cluster Variante 1 (ACCENT)
-    NODE_PURP="${ESC}[38;5;${PRIMARY_256}m"  # Dot-Cluster Variante 2 (PRIMARY)
-    ACC="${ESC}[38;5;${SECONDARY_256}m"      # SECONDARY (Fallback)
-    R="${ESC}[0m"
 
-    # Senity Wordmark in Unicode-Block-Schrift, plus Akzent-Dot (●) im GLOW-Ton.
-    # Eine Farbe pro Zeile (FACE), der ● wird inline auf GLOW umgeschaltet --
-    # so umgehen wir Bash-Byte-Slicing-Probleme mit Multibyte-Chars.
+    # Senity Wordmark in Unicode-Block-Schrift mit vertikalem Lila->Pink-Verlauf:
+    # Zeile 1 startet in Senity-Lila (PRIMARY), die letzte Zeile endet in Pink
+    # (ACCENT), dazwischen wird in 24-Bit-Truecolor linear interpoliert. So
+    # markiert die farbige Variante (im Gegensatz zum bewusst weissen Launcher-
+    # Banner) den Uebergang Host -> Senity. Endpunkte folgen dem Theme via
+    # *_RGB; die 256-Color-Indizes des Themes approximieren #875faf schlecht
+    # (139 ist blasses Mauve), darum interpolieren wir auf RGB statt auf Index.
+    # Der Akzent-Dot (●) wird inline auf den Pink-Ton umgeschaltet -- so
+    # umgehen wir Bash-Byte-Slicing-Probleme mit Multibyte-Chars.
     senity_banner_lines=(
         '   ███████╗███████╗███╗   ██╗██╗████████╗██╗   ██╗'
         '   ██╔════╝██╔════╝████╗  ██║██║╚══██╔══╝╚██╗ ██╔╝'
@@ -119,14 +118,27 @@ if [[ -t 1 && -z "${SENITY_NO_BANNER:-}" ]]; then
         '   ╚══════╝╚══════╝╚═╝  ╚═══╝╚═╝   ╚═╝      ╚═╝   '
     )
 
+    # RGB-Endpunkte aus dem Theme (Fallback: Senity-Lila #875faf -> Pink #ff00af).
+    IFS=';' read -r pr pg pb <<< "${PRIMARY_RGB:-135;95;175}"
+    IFS=';' read -r ar ag ab <<< "${ACCENT_RGB:-255;0;175}"
+    GLOW="${ESC}[38;2;${ar};${ag};${ab}m"     # Pink (Akzent-Dot)
+    NODE_PURP="${ESC}[38;2;${pr};${pg};${pb}m" # Lila (Subtitle)
+    R="${ESC}[0m"
+    span=$(( ${#senity_banner_lines[@]} - 1 ))
+
     printf '\n'
-    for line in "${senity_banner_lines[@]}"; do
-        # Dot inline einfaerben, Rest in FACE.
-        rendered="${line//●/${R}${GLOW}●${R}${FACE}}"
-        printf '%s%s%s\n' "$FACE" "$rendered" "$R"
+    for idx in "${!senity_banner_lines[@]}"; do
+        line="${senity_banner_lines[$idx]}"
+        r=$(( pr + (ar - pr) * idx / span ))
+        g=$(( pg + (ag - pg) * idx / span ))
+        b=$(( pb + (ab - pb) * idx / span ))
+        line_col="${ESC}[1;38;2;${r};${g};${b}m"
+        # Dot inline auf Pink einfaerben, Rest in der Zeilen-Verlaufsfarbe.
+        rendered="${line//●/${R}${GLOW}●${R}${line_col}}"
+        printf '%s%s%s\n' "$line_col" "$rendered" "$R"
     done
     printf '\n'
-    printf '%s   Senity Workspace  --  Senity Code CLI%s\n' "$FACE" "$R"
+    printf '%s   Senity Workspace  --  Senity Code CLI%s\n' "$NODE_PURP" "$R"
     printf '%s   Provider: Senity Chat Proxy%s\n'           "$NODE_PURP" "$R"
     printf '\n'
 fi
