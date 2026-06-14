@@ -101,9 +101,28 @@ class SenityMascotFilterTests(unittest.TestCase):
     def test_warp_renders_host_path_visibly_for_native_file_detection(self):
         def run(mod):
             out = mod.linkify_chunk(b"/workspace/projects/autostart/INITIAL_PROMPT.md")
-            self._assert_link(out, "file:///D:/Host/workspace/projects/autostart/INITIAL_PROMPT.md")
-            self.assertIn(b"D:\\Host\\workspace\\projects\\autostart\\INITIAL_PROMPT.md", out)
-            self.assertNotIn(b"/workspace/projects/autostart/INITIAL_PROMPT.md\x1b]8;;", out)
+            self.assertIn(b"file:///D:/Host/workspace/projects/autostart/INITIAL_PROMPT.md", out)
+            self.assertNotIn(b"\x1b]8;id=senity-", out)
+
+        self._with_filter(self._env(SENITY_HOST_TERM_PROGRAM="WarpTerminal"), run)
+
+    def test_warp_keeps_folders_as_visible_host_paths(self):
+        def run(mod):
+            out = mod.linkify_chunk(b"/workspace/projects/autostart/")
+            self.assertIn(b"D:\\Host\\workspace\\projects\\autostart\\", out)
+            self.assertNotIn(b"file:///D:/Host/workspace/projects/autostart", out)
+            self.assertNotIn(b"\x1b]8;id=senity-", out)
+
+        self._with_filter(self._env(SENITY_HOST_TERM_PROGRAM="WarpTerminal"), run)
+
+    def test_warp_relative_path_uses_recent_directory_context(self):
+        def run(mod):
+            Path("/workspace/.mcp").mkdir(parents=True, exist_ok=True)
+            Path("/workspace/.mcp-config.json").write_text("{}", encoding="utf-8")
+            mod.linkify_chunk(b"/workspace/.mcp/")
+            out = mod.linkify_chunk(b"../.mcp-config.json")
+            self.assertIn(b"file:///D:/Host/workspace/.mcp-config.json", out)
+            self.assertNotIn(b"\x1b]8;id=senity-", out)
 
         self._with_filter(self._env(SENITY_HOST_TERM_PROGRAM="WarpTerminal"), run)
 
@@ -131,7 +150,8 @@ class SenityMascotFilterTests(unittest.TestCase):
             out = mod.linkify_chunk(b"\x1b[?1000h\x1b[?1006hINITIAL_PROMPT.md")
             self.assertNotIn(b"\x1b[?1000h", out)
             self.assertNotIn(b"\x1b[?1006h", out)
-            self._assert_link(out, "file:///D:/Host/workspace/projects/autostart/INITIAL_PROMPT.md")
+            self.assertIn(b"file:///D:/Host/workspace/projects/autostart/INITIAL_PROMPT.md", out)
+            self.assertNotIn(b"\x1b]8;id=senity-", out)
 
         self._with_filter(self._env(SENITY_HOST_TERM_PROGRAM="WarpTerminal"), run)
 

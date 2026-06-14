@@ -183,7 +183,7 @@ ACCENT_256=199        # Pink-Glow
 
 Der Linkifier erkennt Weblinks, Dateien und Ordner und mappt Containerpfade ueber `SENITY_LINK_PATH_MAP` auf Hostpfade. Relative Pfade werden gegen das aktuelle Arbeitsverzeichnis, `/workspace` und direkte Projektordner unter `/workspace/projects/` aufgeloest. Vorhandene OSC-8-Links werden respektiert; weitere Pfade im selben Output-Chunk werden trotzdem verlinkt.
 
-Warp behandelt Claude Code als TUI/Fullscreen-App und reicht Mausereignisse standardmaessig an die App weiter. Deshalb setzt Senity `SENITY_STRIP_MOUSE_REPORTING=auto`: Bei Warp werden Mouse-Reporting-Enable-Sequenzen entfernt, damit `CTRL`+Klick auf Datei-/Ordner-/Weblinks funktioniert. Zusaetzlich setzt Senity `SENITY_VISIBLE_HOST_PATHS=auto`: Bei Warp werden Containerpfade wie `/workspace/...` sichtbar als Hostpfade wie `D:\...\workspace\...` ausgegeben, damit Warps native Datei-/Ordner-Erkennung greifen kann.
+Warp behandelt Claude Code als TUI/Fullscreen-App und reicht Mausereignisse standardmaessig an die App weiter. Deshalb setzt Senity `SENITY_STRIP_MOUSE_REPORTING=auto`: Bei Warp werden Mouse-Reporting-Enable-Sequenzen entfernt, damit `CTRL`+Klick auf Datei-/Ordner-/Weblinks funktioniert. Zusaetzlich setzt Senity `SENITY_VISIBLE_HOST_PATHS=auto`: Bei Warp werden Ordnerpfade wie `/workspace/...` als sichtbare Hostpfade wie `D:\...\workspace\...` ausgegeben; Dateien werden als sichtbare `file:///...`-Links ausgegeben, weil Warp dieses URL-Protokoll nativ oeffnet.
 
 Steuerung:
 

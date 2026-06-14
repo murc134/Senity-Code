@@ -120,6 +120,8 @@ LOCATION_RE = re.compile(r"^(?P<path>.+?)(?::(?P<line>\d+)(?::(?P<col>\d+))?)?$"
 WINDOWS_ABS_RE = re.compile(r"^[A-Za-z]:[\\/]")
 TRAILING_PUNCT = b".,;!?:"
 _PATH_MAPS = None
+_RECENT_CONTAINER_DIRS: list[str] = []
+MAX_RECENT_CONTAINER_DIRS = 32
 
 
 def _strip_mouse_reporting_enabled() -> bool:
@@ -204,7 +206,72 @@ def _container_to_host_path(container_path: str) -> str:
     return container_path
 
 
-def _relative_search_roots():
+def _host_to_container_path(host_path: str):
+    for container_base, host_base in _load_path_maps():
+        if _is_windows_abs(host_base) or host_base.startswith("\\\\"):
+            host_norm = host_path.replace("/", "\\").rstrip("\\/")
+            base_norm = host_base.replace("/", "\\").rstrip("\\/")
+            host_cmp = host_norm.casefold()
+            base_cmp = base_norm.casefold()
+            sep = "\\"
+        else:
+            host_norm = host_path.replace("\\", "/").rstrip("/")
+            base_norm = host_base.replace("\\", "/").rstrip("/")
+            host_cmp = host_norm
+            base_cmp = base_norm
+            sep = "/"
+        if host_cmp == base_cmp or host_cmp.startswith(base_cmp + sep):
+            rel = host_norm[len(base_norm):].lstrip("\\/")
+            return os.path.normpath(container_base.rstrip("/") + "/" + rel.replace("\\", "/")).replace("\\", "/")
+    return None
+
+
+def _container_path_kind(container_path: str) -> str:
+    try:
+        if os.path.isdir(container_path):
+            return "dir"
+        if os.path.lexists(container_path):
+            return "file"
+    except OSError:
+        pass
+    return "unknown"
+
+
+def _remember_container_dir(container_dir: str):
+    container_dir = os.path.normpath(container_dir).replace("\\", "/")
+    if not container_dir.startswith("/"):
+        return
+    candidates = [container_dir]
+    parent = os.path.dirname(container_dir.rstrip("/"))
+    if parent and parent != container_dir:
+        candidates.append(parent)
+    for candidate in candidates:
+        if candidate in _RECENT_CONTAINER_DIRS:
+            _RECENT_CONTAINER_DIRS.remove(candidate)
+        _RECENT_CONTAINER_DIRS.insert(0, candidate)
+    del _RECENT_CONTAINER_DIRS[MAX_RECENT_CONTAINER_DIRS:]
+
+
+def _remember_container_path(container_path: str, kind: str | None = None):
+    kind = kind or _container_path_kind(container_path)
+    if kind == "dir":
+        _remember_container_dir(container_path)
+    elif kind == "file":
+        _remember_container_dir(os.path.dirname(container_path))
+
+
+def _recent_search_roots():
+    roots = []
+    for root in _RECENT_CONTAINER_DIRS:
+        try:
+            if os.path.isdir(root) and root not in roots:
+                roots.append(root)
+        except OSError:
+            continue
+    return roots
+
+
+def _relative_search_roots(path_text: str = ""):
     roots = []
 
     def add(root):
@@ -212,6 +279,10 @@ def _relative_search_roots():
         if root not in roots:
             roots.append(root)
 
+    prefer_recent = path_text.startswith(("./", "../", ".\\", "..\\")) or "/" in path_text or "\\" in path_text
+    if prefer_recent:
+        for root in _recent_search_roots():
+            add(root)
     add(os.getcwd())
     add("/workspace")
     try:
@@ -229,6 +300,9 @@ def _relative_search_roots():
                 add(container_base)
         except OSError:
             continue
+    if not prefer_recent:
+        for root in _recent_search_roots():
+            add(root)
     return roots
 
 
@@ -271,6 +345,12 @@ def _visible_host_label(host_path: str, original_path: str, line: str | None, co
     return label.encode("utf-8", "replace")
 
 
+def _visible_path_label(host_path: str, original_path: str, line: str | None, col: str | None, kind: str, uri: str) -> bytes:
+    if kind == "file":
+        return uri.encode("ascii", "ignore")
+    return _visible_host_label(host_path, original_path, line, col)
+
+
 def _split_location(path_text: str):
     m = LOCATION_RE.match(path_text)
     if not m:
@@ -284,7 +364,7 @@ def _resolve_container_path(path_text: str):
     if path_text.startswith("/"):
         candidates.append(os.path.normpath(path_text))
     else:
-        for root in _relative_search_roots():
+        for root in _relative_search_roots(path_text):
             candidate = os.path.normpath(os.path.join(root, path_text))
             if candidate not in candidates:
                 candidates.append(candidate)
@@ -305,15 +385,21 @@ def _path_target_for(raw: bytes):
     path_text, _line, _col = _split_location(text)
     if _is_windows_abs(path_text):
         uri = _editor_uri(path_text, _line, _col)
-        label = _visible_host_label(path_text, path_text, _line, _col) if VISIBLE_HOST_PATHS else None
-        return uri, label
+        container_path = _host_to_container_path(path_text)
+        kind = _container_path_kind(container_path) if container_path else "unknown"
+        if container_path:
+            _remember_container_path(container_path, kind)
+        label = _visible_path_label(path_text, path_text, _line, _col, kind, uri) if VISIBLE_HOST_PATHS else None
+        return uri, label, not VISIBLE_HOST_PATHS
     container_path = _resolve_container_path(path_text)
     if not container_path:
         return None
+    kind = _container_path_kind(container_path)
+    _remember_container_path(container_path, kind)
     host_path = _container_to_host_path(container_path)
     uri = _editor_uri(host_path, _line, _col)
-    label = _visible_host_label(host_path, path_text, _line, _col) if VISIBLE_HOST_PATHS else None
-    return uri, label
+    label = _visible_path_label(host_path, path_text, _line, _col, kind, uri) if VISIBLE_HOST_PATHS else None
+    return uri, label, not VISIBLE_HOST_PATHS
 
 
 def _trim_trailing(raw: bytes):
@@ -382,10 +468,13 @@ def _linkify_visible_bytes(raw_run: bytes, visible: bytes, visible_to_raw: list[
         else:
             target = _path_target_for(core)
             if target:
-                uri, label_override = target
+                uri, label_override, wrap = target
                 core_raw_end = visible_to_raw[m.start() + len(core) - 1] + 1
                 label = label_override if label_override is not None else raw_run[raw_start:core_raw_end]
-                out.extend(_osc8(uri, label))
+                if wrap:
+                    out.extend(_osc8(uri, label))
+                else:
+                    out.extend(label)
                 out.extend(raw_run[core_raw_end:raw_end])
             else:
                 out.extend(raw_run[raw_start:raw_end])
