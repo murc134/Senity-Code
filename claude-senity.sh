@@ -547,19 +547,19 @@ else
 fi
 
 # Image pruefen + ggf. bauen
-write_info "Pruefe Docker Image 'senity-claude:latest'..."
+target_image="senity-claude:latest"
+write_info "Pruefe Docker Image '${target_image}'..."
 needs_build=false
 
 if [[ "$REBUILD" == true ]]; then
-    write_info "Force-Rebuild angefordert. Loesche bestehendes Image (falls vorhanden)..."
-    docker image rm senity-claude:latest &>/dev/null || true
+    write_info "Force-Rebuild angefordert. Ersetze Image nach erfolgreichem Build..."
     needs_build=true
 else
-    if ! docker image inspect senity-claude:latest &>/dev/null; then
-        write_warn "Image 'senity-claude:latest' nicht gefunden."
+    if ! docker image inspect "$target_image" &>/dev/null; then
+        write_warn "Image '${target_image}' nicht gefunden."
         needs_build=true
     else
-        image_created="$(docker image inspect senity-claude:latest --format '{{.Created}}' 2>&1)"
+        image_created="$(docker image inspect "$target_image" --format '{{.Created}}' 2>&1)"
         write_ok "Image vorhanden (erstellt: $image_created)"
     fi
 fi
@@ -570,14 +570,27 @@ if [[ "$needs_build" == true ]]; then
         exit_error "Dockerfile nicht gefunden: $dockerfile_path"
     fi
     write_info "Starte Image-Build (kann 2-5 Minuten dauern)..."
+    build_tag="senity-claude:build-$$-$(date +%s)"
     # Bei -Rebuild ohne Cache bauen, damit alte CRLF-/Layer-Reste sicher weg sind.
+    build_provenance=()
+    if docker build --help 2>&1 | grep -q -- '--provenance'; then
+        # Lokale Launcher-Builds brauchen keine Attestations. Docker Desktop 28
+        # kann sonst beim Export gelegentlich mit "image already exists" abbrechen.
+        build_provenance=(--provenance=false)
+    fi
     build_no_cache=()
     if [[ "$REBUILD" == "true" ]]; then build_no_cache=(--no-cache); fi
-    if ! docker build ${build_no_cache[@]+"${build_no_cache[@]}"} -t senity-claude:latest "$SCRIPT_DIR"; then
+    if ! docker build ${build_provenance[@]+"${build_provenance[@]}"} ${build_no_cache[@]+"${build_no_cache[@]}"} -t "$build_tag" "$SCRIPT_DIR"; then
+        docker image rm -f "$build_tag" &>/dev/null || true
         exit_error "Image-Build fehlgeschlagen.
-  Manueller Versuch: docker build -t senity-claude:latest '$SCRIPT_DIR'"
+  Manueller Versuch: docker build --provenance=false -t senity-claude:latest '$SCRIPT_DIR'"
     fi
-    write_ok "Image gebaut: senity-claude:latest"
+    if ! docker image tag "$build_tag" "$target_image"; then
+        docker image rm -f "$build_tag" &>/dev/null || true
+        exit_error "Image-Tagging fehlgeschlagen: ${target_image}"
+    fi
+    docker image rm -f "$build_tag" &>/dev/null || true
+    write_ok "Image gebaut: ${target_image}"
 fi
 
 # Zombie-Container aufraemen

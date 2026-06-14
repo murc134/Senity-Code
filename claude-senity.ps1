@@ -901,19 +901,19 @@ if (-not $daemonOk) {
 }
 
 # Image pruefen + ggf. bauen
-Write-INFO "Pruefe Docker Image 'senity-claude:latest'..."
+$TargetImage = 'senity-claude:latest'
+Write-INFO "Pruefe Docker Image '$TargetImage'..."
 $needsBuild = $false
 if ($Rebuild) {
-    Write-INFO "Force-Rebuild angefordert. Loesche bestehendes Image (falls vorhanden)..."
-    docker image rm senity-claude:latest 2>&1 | Out-Null
+    Write-INFO "Force-Rebuild angefordert. Ersetze Image nach erfolgreichem Build..."
     $needsBuild = $true
 } else {
-    docker image inspect senity-claude:latest 2>&1 | Out-Null
+    docker image inspect $TargetImage 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        Write-WARN "Image 'senity-claude:latest' nicht gefunden."
+        Write-WARN "Image '$TargetImage' nicht gefunden."
         $needsBuild = $true
     } else {
-        $imageCreated = docker image inspect senity-claude:latest --format "{{.Created}}" 2>&1
+        $imageCreated = docker image inspect $TargetImage --format "{{.Created}}" 2>&1
         Write-OK "Image vorhanden (erstellt: $imageCreated)"
     }
 }
@@ -923,15 +923,30 @@ if ($needsBuild) {
         Exit-Error "Dockerfile nicht gefunden: $dockerfilePath"
     }
     Write-INFO "Starte Image-Build (kann 2-5 Minuten dauern)..."
+    $buildTag = "senity-claude:build-$PID-$(([guid]::NewGuid().ToString('N')).Substring(0,8))"
     # Bei -Rebuild ohne Cache bauen, damit alte CRLF-/Layer-Reste sicher weg sind.
-    $buildArgs = @('build', '-t', 'senity-claude:latest')
+    $buildArgs = @('build')
+    $buildHelp = docker build --help 2>&1
+    if (($buildHelp -join "`n") -match '--provenance') {
+        # Lokale Launcher-Builds brauchen keine Attestations. Docker Desktop 28
+        # kann sonst beim Export gelegentlich mit "image already exists" abbrechen.
+        $buildArgs += '--provenance=false'
+    }
     if ($Rebuild) { $buildArgs += '--no-cache' }
+    $buildArgs += @('-t', $buildTag)
     $buildArgs += "$ScriptDir"
     docker @buildArgs
     if ($LASTEXITCODE -ne 0) {
+        docker image rm -f $buildTag 2>&1 | Out-Null
         Exit-Error "Image-Build fehlgeschlagen (Exit $LASTEXITCODE)."
     }
-    Write-OK "Image gebaut: senity-claude:latest"
+    docker image tag $buildTag $TargetImage
+    if ($LASTEXITCODE -ne 0) {
+        docker image rm -f $buildTag 2>&1 | Out-Null
+        Exit-Error "Image-Tagging fehlgeschlagen: $TargetImage"
+    }
+    docker image rm -f $buildTag 2>&1 | Out-Null
+    Write-OK "Image gebaut: $TargetImage"
 }
 
 # Zombie-Container aufraemen

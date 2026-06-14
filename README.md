@@ -149,7 +149,7 @@ CMD ["claude"]
 
 `ANTHROPIC_BASE_URL` und `ANTHROPIC_API_KEY` werden zur Laufzeit vom Launcher gesetzt, nicht im Image fest verdrahtet.
 
-Image wird einmalig gebaut: `docker build -t senity-claude:latest .`
+Image wird einmalig gebaut: `docker build --provenance=false -t senity-claude:latest .`
 
 ## Yolo Mode
 
@@ -167,7 +167,10 @@ Image wird einmalig gebaut: `docker build -t senity-claude:latest .`
 
 ## Senity-Theme (Farben)
 
-Alle Senity-Farben (Banner im Container, Welcome-Box im Claude-Code-CLI) werden aus `senity-theme.conf` gespeist:
+Die Senity-Farben sind auf zwei Ebenen aufgeteilt:
+
+- `senity-theme.conf` steuert Banner-Akzente und Build-Fallbacks.
+- `senity-theme.json` ist das native Claude-Code-Custom-Theme fuer CLI-Farb-Token und wird beim Containerstart nach `~/.claude/themes/senity.json` kopiert und als `custom:senity` aktiviert.
 
 ```
 PRIMARY_256=99        # dunkles Senity-Lila
@@ -175,8 +178,8 @@ SECONDARY_256=141     # helles Senity-Lila
 ACCENT_256=199        # Pink-Glow
 ```
 
-- `patch-claude-header.js` patcht beim Image-Build alle Anthropic-Orange-Farbcodes im Claude-Code-Bundle auf die Senity-Palette und ersetzt Welcome-Box-Strings ("Welcome back!" -> "Willkommen bei Senity!" etc.).
-- `docker-entrypoint.sh` liest dieselbe Datei zur Laufzeit fuer das ASCII-Banner.
+- `patch-claude-header.js` patcht beim Image-Build Branding-Strings ("Welcome back!" -> "Willkommen bei Senity!" etc.) und laengenerhaltende Fallback-Farbcodes im Claude-Code-Bundle.
+- `docker-entrypoint.sh` liest `senity-theme.conf` zur Laufzeit fuer das ASCII-Banner und installiert/aktiviert `senity-theme.json` als Custom-Theme.
 - `senity-mascot-filter.py` setzt zusaetzlich klickbare OSC-8-Links fuer Web-URLs und vorhandene Dateipfade (`/workspace/...`, relative Pfade, `.bindings`-Mounts), damit Strg+Klick im Terminal die Host-Datei oeffnet. Mit `--test-links` gibt der Launcher je einen Web-, Datei- und Ordnerlink aus.
 
 ### Klickbare Links / Warp
@@ -244,7 +247,7 @@ Aenderungen an `senity-theme.conf` benoetigen einen Image-Rebuild:
 ./claude-senity.sh --rebuild
 ```
 
-Loescht `senity-claude:latest` und baut das Image neu. Noetig nach Aenderungen an `Dockerfile`, `senity-theme.conf`, `patch-claude-header.js`, `senity-mascot-filter.py` oder `docker-entrypoint.sh`.
+Baut das Image neu und ersetzt `senity-claude:latest` erst nach erfolgreichem Build. Noetig nach Aenderungen an `Dockerfile`, `senity-theme.conf`, `patch-claude-header.js`, `senity-mascot-filter.py` oder `docker-entrypoint.sh`.
 
 ## Troubleshooting
 

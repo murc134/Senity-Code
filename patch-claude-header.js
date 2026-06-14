@@ -193,87 +193,23 @@ const colorReplacements = [
     ['38;2;255;135;95',  `38;2;${SR}`],
 ];
 
-// ─── Theme-Struktur: echtes auswaehlbares "Senity" Theme ────────
-// Registriert "senity" als vollwertiges, im /theme-Picker waehlbares Theme.
-// Drei strukturelle Eingriffe ins Bundle (cli.js):
-//   1. "senity" in die Liste gueltiger Theme-Werte (GS1)
-//   2. Eintrag in die Theme-Picker-Optionen
-//   3. Resolver-Switch: vollstaendiges Senity-Theme (Dark-Basis + 45 Tokens)
-// Das Theme wird zusaetzlich von docker-entrypoint.sh als aktives Theme
-// gesetzt, damit es bei jedem Container-Start der Default ist.
-// ACHTUNG: haengt an minifizierten Variablennamen (GS1/_N_/AN_). Bei einem
-// Claude-Code-Update koennen diese sich aendern; dann greifen die Patches
-// nicht mehr (kein Crash — "Senity" erscheint dann nur nicht im Picker).
-// Wird ausschliesslich auf Text-Dateien angewendet, nie auf Binaries.
-const SENITY_THEME_TOKENS = [
-    // Haupt-Akzent (Claude)
-    'claude:"rgb(255,0,175)"',
-    'claudeShimmer:"rgb(166,0,255)"',
-    'briefLabelClaude:"rgb(255,0,175)"',
-    // Text & Hintergrund
-    'text:"rgb(255,255,255)"',
-    'inverseText:"rgb(0,0,0)"',
-    'inactive:"rgb(255,209,249)"',
-    'inactiveShimmer:"rgb(198,159,191)"',
-    'subtle:"rgb(183,115,206)"',
-    // Prompt & Borders
-    'promptBorder:"rgb(105,76,153)"',
-    'promptBorderShimmer:"rgb(135,95,175)"',
-    'bashBorder:"rgb(253,93,177)"',
-    // Berechtigungen & System
-    'permission:"rgb(200,179,249)"',
-    'permissionShimmer:"rgb(237,209,255)"',
-    'claudeBlue_FOR_SYSTEM_SPINNER:"rgb(175,135,255)"',
-    'claudeBlueShimmer_FOR_SYSTEM_SPINNER:"rgb(214,179,255)"',
-    'suggestion:"rgb(225,160,245)"',
-    'remember:"rgb(235,170,250)"',
-    'briefLabelYou:"rgb(175,135,255)"',
-    // Status-Farben
-    'success:"rgb(79,186,91)"',
-    'error:"rgb(255,82,108)"',
-    'warning:"rgb(255,90,200)"',
-    'warningShimmer:"rgb(255,140,220)"',
-    'merged:"rgb(175,135,255)"',
-    'autoAccept:"rgb(175,135,255)"',
-    // Diff-Farben
-    'diffAdded:"rgb(28,64,44)"',
-    'diffRemoved:"rgb(74,32,44)"',
-    'diffAddedDimmed:"rgb(40,52,46)"',
-    'diffRemovedDimmed:"rgb(58,40,46)"',
-    'diffAddedWord:"rgb(86,196,118)"',
-    'diffRemovedWord:"rgb(228,108,130)"',
-    // Modi
-    'planMode:"rgb(135,95,175)"',
-    'fastMode:"rgb(255,0,175)"',
-    'fastModeShimmer:"rgb(255,140,220)"',
-    'ide:"rgb(184,151,195)"',
-    'background:"rgb(135,95,175)"',
-    // Rate Limit & Misc
-    'rate_limit_fill:"rgb(255,0,175)"',
-    'rate_limit_empty:"rgb(58,40,72)"',
-    'professionalBlue:"rgb(190,140,230)"',
-    'chromeYellow:"rgb(251,188,4)"',
-    // Rainbow (Subagents)
-    'rainbow_red:"rgb(236,91,91)"',
-    'rainbow_orange:"rgb(245,139,87)"',
-    'rainbow_yellow:"rgb(250,195,95)"',
-    'rainbow_green:"rgb(145,200,130)"',
-    'rainbow_blue:"rgb(130,170,220)"',
-    'rainbow_indigo:"rgb(155,130,200)"',
-    'rainbow_violet:"rgb(200,130,180)"',
-].join(',');
-const themeStructureReplacements = [
-    // 1. "senity" als gueltigen Theme-Wert registrieren
-    ['GS1=["dark","light","light-daltonized","dark-daltonized","light-ansi","dark-ansi"]',
-     'GS1=["dark","light","light-daltonized","dark-daltonized","light-ansi","dark-ansi","senity"]'],
-    // 2. Eintrag im Theme-Picker (alle Vorkommen)
-    ['{label:"Light mode (ANSI colors only)",value:"light-ansi"}]',
-     '{label:"Light mode (ANSI colors only)",value:"light-ansi"},{label:"Senity",value:"senity"}]'],
-    // 3. Resolver-Switch: Senity = Dark-Basis (...AN_) + 45 Senity-Tokens
-    ['switch(q){case"light":return _N_;',
-     `switch(q){case"senity":return{...AN_,${SENITY_THEME_TOKENS}};case"light":return _N_;`],
-];
-let themeStructHits = 0;
+// ─── Theme-Token: jetzt ueber natives Custom-Theme, NICHT mehr hier ──
+// Frueher injizierte dieser Patch ein eigenes "senity"-Theme in den Resolver-
+// Switch des Bundles (case"senity" + GS1-Liste + Picker-Eintrag, gestuetzt auf
+// minifizierte Variablennamen GS1/_N_/AN_). Seit Claude Code als kompiliertes
+// Native-Binary ausgeliefert wird, existiert dieser JS-Switch im Artefakt nicht
+// mehr (0 Treffer), und laengenerhaltendes rgb()-Recoloring im Binary scheitert
+// an unterschiedlichen Byte-Laengen (z.B. warning rgb(255,193,7) -> rgb(255,90,200)).
+//
+// Die Ebene-2-Farb-Token liefert daher das native Custom-Theme-Feature:
+// senity-theme.json -> ~/.claude/themes/senity.json, aktiviert per
+// activeCustomTheme="custom:senity" (siehe docker-entrypoint.sh). Update-fest,
+// keine Abhaengigkeit von minifizierten Symbolen, keine Laengen-Limits.
+//
+// Dieser Patch beschraenkt sich auf Branding (textReplacements: "Claude"->
+// "Senity", Spinner-Woerter) und das laengenerhaltende Orange->Lila-Recoloring
+// (colorReplacements) als sane Fallback-Basis, falls das Custom-Theme einmal
+// nicht laedt.
 
 // ─── npm root finden ────────────────────────────────────────────
 let root;
@@ -335,15 +271,6 @@ function patchTextFile(file) {
         const parts = content.split(from);
         content = parts.join(to);
         colorHits += parts.length - 1;
-    }
-    // Theme-Struktur zuletzt: injizierte rgb()-Literale duerfen nicht mehr
-    // von colorReplacements erfasst werden.
-    for (const [from, to] of themeStructureReplacements) {
-        if (!content.includes(from)) continue;
-        const parts = content.split(from);
-        content = parts.join(to);
-        themeStructHits += parts.length - 1;
-        textHits += parts.length - 1;
     }
     if (textHits + colorHits > 0) fs.writeFileSync(file, content);
     return [textHits, colorHits];
@@ -438,9 +365,5 @@ console.log(`[patch] Gesamt: text=${totalText}, color=${totalColor} in ${touched
 if (totalText === 0 && totalColor === 0) {
     console.warn('[patch] WARN: keine Treffer. CLI evtl. veraendert (Update?).');
 }
-if (themeStructHits >= themeStructureReplacements.length) {
-    console.log('[patch] Senity-Theme als auswaehlbares Theme verankert (3/3 Struktur-Patches).');
-} else {
-    console.warn(`[patch] WARN: Senity-Theme nur teilweise verankert (${themeStructHits}/${themeStructureReplacements.length}). `
-        + 'Bundle evtl. aktualisiert — "Senity" erscheint dann nicht im /theme-Picker.');
-}
+console.log('[patch] Ebene-2-Farb-Token kommen vom nativen Custom-Theme '
+    + '(senity-theme.json, aktiviert via entrypoint).');

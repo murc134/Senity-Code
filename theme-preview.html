@@ -316,18 +316,18 @@
   <h2 class="ebene">Ebene 1 &mdash; Banner-Akzente (senity-theme.conf)</h2>
   <div id="accent-controls"></div>
 
-  <h2 class="ebene">Ebene 2 &mdash; Senity-Theme &middot; 46 Token</h2>
+  <h2 class="ebene">Ebene 2 &mdash; Senity-Theme &middot; 49 Token</h2>
   <div id="color-controls"></div>
 
   <div class="export-btns">
-    <button class="export-btn" onclick="openExport('tokens')">SENITY_THEME_TOKENS</button>
+    <button class="export-btn" onclick="openExport('tokens')">senity-theme.json</button>
     <button class="export-btn" onclick="openExport('conf')">senity-theme.conf</button>
     <button class="export-btn" onclick="openExport('json')">JSON</button>
     <button class="export-btn" onclick="openExport('chat')">Fuer Chat kopieren</button>
   </div>
   <div class="hint">
-    SENITY_THEME_TOKENS &rarr; in <code>patch-claude-header.js</code> ersetzen.<br>
-    senity-theme.conf &rarr; Datei im Repo-Root ersetzen.<br>
+    senity-theme.json &rarr; Datei im Repo-Root ersetzen (natives Custom-Theme).<br>
+    senity-theme.conf &rarr; Datei im Repo-Root ersetzen (Banner-Akzente).<br>
     Danach <code>./claude-senity.sh --rebuild</code>.
   </div>
 </div>
@@ -345,7 +345,7 @@
       <button class="export-close-btn" onclick="closeExport()">Schliessen [ESC]</button>
     </div>
     <div class="export-tabs">
-      <button class="export-tab" data-tab="tokens" onclick="switchExportTab('tokens')">SENITY_THEME_TOKENS</button>
+      <button class="export-tab" data-tab="tokens" onclick="switchExportTab('tokens')">senity-theme.json</button>
       <button class="export-tab" data-tab="conf" onclick="switchExportTab('conf')">senity-theme.conf</button>
       <button class="export-tab" data-tab="json" onclick="switchExportTab('json')">JSON</button>
       <button class="export-tab" data-tab="chat" onclick="switchExportTab('chat')">Fuer Chat</button>
@@ -367,12 +367,16 @@
 // Senity Theme — Live aus patch-claude-header.js + senity-theme.conf
 // ===========================================================
 
-// Ebene 2 / senity-classic: das aktuell in der CLI aktive Senity-Theme.
-// Die 46 Token aus patch-claude-header.js (SENITY_THEME_TOKENS, unveraendert).
+// Ebene 2 / senity-classic: Referenz-Werte der frueheren Bundle-Variante,
+// erweitert um skill/effortUltra/clawd_body. Aktive Quelle ist jetzt das
+// native Custom-Theme (senity-theme.json), nicht mehr patch-claude-header.js.
 const SENITY_CLASSIC = {
   claude: "rgb(255,0,187)",
   claudeShimmer: "rgb(174,0,255)",
   briefLabelClaude: "rgb(255,3,187)",
+  skill: "rgb(175,135,255)",
+  effortUltra: "rgb(175,135,255)",
+  clawd_body: "rgb(255,0,187)",
   text: "rgb(255,255,255)",
   inverseText: "rgb(0,0,0)",
   inactive: "rgb(155,125,151)",
@@ -423,14 +427,17 @@ const SENITY_CLASSIC = {
 // Pink #FF00AF = claude, Lila #AF87FF = Shimmer/Sekundaer, #875FAF = Borders.
 // Glaettet die harten Klassik-Werte (weisser diffAdded, rosa background, ...).
 const SENITY_FRESH = {
-  claude: "rgb(255,0,175)",
-  claudeShimmer: "rgb(214,128,255)",
-  briefLabelClaude: "rgb(255,0,175)",
+  claude: "rgb(135,95,175)",
+  claudeShimmer: "rgb(175,135,255)",
+  briefLabelClaude: "rgb(135,95,175)",
+  skill: "rgb(175,135,255)",
+  effortUltra: "rgb(175,135,255)",
+  clawd_body: "rgb(135,95,175)",
   text: "rgb(255,255,255)",
   inverseText: "rgb(0,0,0)",
-  inactive: "rgb(155,125,151)",
+  inactive: "rgb(255,209,249)",
   inactiveShimmer: "rgb(198,159,191)",
-  subtle: "rgb(107,92,112)",
+  subtle: "rgb(183,115,206)",
   promptBorder: "rgb(105,76,153)",
   promptBorderShimmer: "rgb(135,95,175)",
   bashBorder: "rgb(253,93,177)",
@@ -474,7 +481,9 @@ const SENITY_FRESH = {
 // Stock Dark-Theme aus dem Claude-Code-Bundle (Vergleich/Reset).
 const DARK = {
   claude: "rgb(215,119,87)", claudeShimmer: "rgb(235,159,127)",
-  briefLabelClaude: "rgb(215,119,87)", text: "rgb(255,255,255)",
+  briefLabelClaude: "rgb(215,119,87)",
+  skill: "rgb(175,135,255)", effortUltra: "rgb(175,135,255)", clawd_body: "rgb(215,119,87)",
+  text: "rgb(255,255,255)",
   inverseText: "rgb(0,0,0)", inactive: "rgb(153,153,153)",
   inactiveShimmer: "rgb(193,193,193)", subtle: "rgb(80,80,80)",
   promptBorder: "rgb(136,136,136)", promptBorderShimmer: "rgb(166,166,166)",
@@ -502,7 +511,9 @@ const DARK = {
 
 const LIGHT = {
   claude: "rgb(215,119,87)", claudeShimmer: "rgb(245,149,117)",
-  briefLabelClaude: "rgb(215,119,87)", text: "rgb(0,0,0)",
+  briefLabelClaude: "rgb(215,119,87)",
+  skill: "rgb(135,0,255)", effortUltra: "rgb(135,0,255)", clawd_body: "rgb(215,119,87)",
+  text: "rgb(0,0,0)",
   inverseText: "rgb(255,255,255)", inactive: "rgb(102,102,102)",
   inactiveShimmer: "rgb(142,142,142)", subtle: "rgb(175,175,175)",
   promptBorder: "rgb(153,153,153)", promptBorderShimmer: "rgb(183,183,183)",
@@ -535,7 +546,7 @@ const THEMES = {
   light: LIGHT,
 };
 
-// Token-Reihenfolge fuer den SENITY_THEME_TOKENS-Export (= Bundle-Reihenfolge).
+// Token-Reihenfolge fuer den senity-theme.json-Export (overrides-Reihenfolge).
 const TOKEN_ORDER = Object.keys(SENITY_CLASSIC);
 
 // Ebene 1: Banner-Akzente aus senity-theme.conf.
@@ -547,7 +558,7 @@ const ACCENTS_DEFAULT = {
 
 // Token-Gruppen fuer die Sidebar
 const TOKEN_GROUPS = {
-  "Haupt-Akzent (Claude)": ["claude", "claudeShimmer", "briefLabelClaude"],
+  "Haupt-Akzent (Claude)": ["claude", "claudeShimmer", "briefLabelClaude", "skill", "effortUltra", "clawd_body"],
   "Text & Hintergrund": ["text", "inverseText", "inactive", "inactiveShimmer", "subtle"],
   "Prompt & Borders": ["promptBorder", "promptBorderShimmer", "bashBorder"],
   "Berechtigungen & System": [
@@ -844,6 +855,24 @@ function renderPreview() {
       <div class="term-line" style="color:${c('rainbow_violet')}">  &#9632; Violet Agent <span style="color:${c('inactive')}"> — Frontend</span></div>
     </div>
   </div>
+
+  <!-- Weitere Token: erscheinen sonst in keiner Preview-Szene, werden hier
+       als Farb-Chips gezeigt, damit Edits im Sidebar sichtbar wirken. -->
+  <div class="section-title">Weitere Token (Chips)</div>
+  <div class="terminal">
+    <div class="terminal-body" style="background:${bg}">
+      ${[
+        "inverseText","inactiveShimmer","promptBorderShimmer","permissionShimmer",
+        "claudeBlue_FOR_SYSTEM_SPINNER","claudeBlueShimmer_FOR_SYSTEM_SPINNER",
+        "warningShimmer","ide","background","professionalBlue","chromeYellow",
+      ].map(t => {
+        const v = c(t);
+        const m = v.match(/\d+/g).map(Number);
+        const lum = 0.299*m[0] + 0.587*m[1] + 0.114*m[2];
+        return `<span style="display:inline-block;margin:3px;padding:4px 8px;border-radius:4px;background:${v};color:${lum>140?'#000':'#fff'};font-size:11px;">${t}</span>`;
+      }).join("")}
+    </div>
+  </div>
   `;
 }
 
@@ -875,18 +904,16 @@ let currentExportTab = "tokens";
 function generateExport(tab) {
   switch (tab) {
     case "tokens": {
-      const lines = [
-        "// In patch-claude-header.js das Array SENITY_THEME_TOKENS ersetzen.",
-        "// Reihenfolge = Bundle-Reihenfolge. Kein Token doppelt.",
-        "",
-        "const SENITY_THEME_TOKENS = [",
-      ];
+      // Natives Custom-Theme: Claude Code laedt ~/.claude/themes/*.json im
+      // Format { base, overrides }. Der Token-Key briefLabelClaude heisst im
+      // gepatchten Binary briefLabelSenity (Branding-Patch ersetzt "Claude" ->
+      // "Senity"), darum hier umbenennen. Direkt in senity-theme.json pasten.
+      const overrides = {};
       for (const t of TOKEN_ORDER) {
-        const v = (currentTheme[t] || "rgb(128,128,128)").replace(/\s/g, "");
-        lines.push(`    '${t}:"${v}"',`);
+        const key = t === "briefLabelClaude" ? "briefLabelSenity" : t;
+        overrides[key] = (currentTheme[t] || "rgb(128,128,128)").replace(/\s/g, "");
       }
-      lines.push("].join(',');");
-      return lines.join("\n");
+      return JSON.stringify({ base: "dark", overrides }, null, 2);
     }
 
     case "conf": {
@@ -939,7 +966,7 @@ function generateExport(tab) {
       for (const k of ["PRIMARY", "SECONDARY", "ACCENT"]) {
         lines.push(`  ${k.padEnd(12)} ${currentAccents[k].hex.toUpperCase()}`);
       }
-      lines.push("", "-- Ebene 2: Senity-Theme (46 Token) --");
+      lines.push("", "-- Ebene 2: Senity-Theme (49 Token) --");
       for (const [group, tokens] of Object.entries(TOKEN_GROUPS)) {
         lines.push(`-- ${group} --`);
         for (const t of tokens) {
@@ -966,7 +993,7 @@ function switchExportTab(tab) {
     t.classList.toggle("active", t.dataset.tab === tab);
   });
   const titles = {
-    tokens: "SENITY_THEME_TOKENS — fuer patch-claude-header.js",
+    tokens: "senity-theme.json (natives Custom-Theme, Repo-Root)",
     conf: "senity-theme.conf — Repo-Root",
     json: "Theme als JSON",
     chat: "Kompakt-Export zum Pasten in Chat",

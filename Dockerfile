@@ -39,6 +39,11 @@ RUN npm install -g @google/gemini-cli || echo "[WARN] @google/gemini-cli install
 COPY senity-theme.conf /etc/senity-theme.conf
 RUN sed -i 's/\r$//' /etc/senity-theme.conf
 
+# Natives Custom-Theme (Ebene 2: CLI-Farb-Token). Claude Code laedt
+# Custom-Themes aus ~/.claude/themes/*.json; der Entrypoint kopiert diese
+# Datei beim Start dorthin und aktiviert sie via activeCustomTheme.
+COPY senity-theme.json /etc/senity-theme.json
+
 # Welcome-Box-Strings + Anthropic-Orange auf Senity-Farben patchen
 COPY patch-claude-header.js /tmp/patch-claude-header.js
 RUN SENITY_THEME_FILE=/etc/senity-theme.conf node /tmp/patch-claude-header.js \

@@ -16,15 +16,32 @@ fi
 # Code behandelt einen via ANTHROPIC_API_KEY gesetzten Key als "custom API
 # key" mit Approve/Reject — ein einmal abgelehnter Key wuerde sonst dauerhaft
 # zum Login-Screen fuehren.
-# Zusaetzlich wird das Theme bei jedem Start auf "senity" gesetzt — so ist das
-# Senity-Theme immer der Default (das Bundle bringt "senity" als auswaehlbares
-# Theme mit, siehe patch-claude-header.js / themeStructureReplacements).
+# ── Senity Custom-Theme installieren (Ebene 2: CLI-Farb-Token) ──
+# Claude Code laedt Custom-Themes aus ~/.claude/themes/*.json (gleicher Loader
+# wie commands/agents/skills). Der Slug ist der Dateiname ohne Endung, hier
+# "senity". Aktiviert wird es ueber den Config-Key activeCustomTheme mit dem
+# Prefix "custom:". Die Datei wird bei jedem Start aus dem Image kopiert, damit
+# sie zur committeten senity-theme.json passt (analog senity-theme.conf):
+# Aenderungen am Theme laufen ueber die Repo-Datei + Image-Rebuild.
+THEME_JSON_SRC="${SENITY_THEME_JSON:-/etc/senity-theme.json}"
+THEME_JSON_DST="${HOME}/.claude/themes/senity.json"
+if [[ -f "$THEME_JSON_SRC" ]]; then
+    mkdir -p "${HOME}/.claude/themes" 2>/dev/null || true
+    cat "$THEME_JSON_SRC" > "$THEME_JSON_DST" 2>/dev/null || true
+fi
+
+# Onboarding abschliessen, Basis-Theme auf ein gueltiges Built-in ("dark")
+# setzen und das Senity-Custom-Theme via activeCustomTheme aktivieren. "dark"
+# dient als Fallback-Basis, falls das Custom-Theme einmal nicht laedt — die
+# fruehere .theme = "senity"-Variante war wirkungslos, weil das Binary kein
+# Theme namens "senity" kennt (siehe patch-claude-header.js, Branding-only).
 CLAUDE_JSON="${HOME}/.claude.json"
 if command -v jq >/dev/null 2>&1; then
     if [[ -f "$CLAUDE_JSON" ]]; then
         tmp_json="$(mktemp)"
         if jq '.hasCompletedOnboarding = true
-               | .theme = "senity"
+               | .theme = "dark"
+               | .activeCustomTheme = "custom:senity"
                | if has("customApiKeyResponses")
                  then .customApiKeyResponses.rejected = []
                  else . end' \
@@ -33,7 +50,7 @@ if command -v jq >/dev/null 2>&1; then
         fi
         rm -f "$tmp_json"
     else
-        printf '{"hasCompletedOnboarding":true,"theme":"senity"}\n' > "$CLAUDE_JSON"
+        printf '{"hasCompletedOnboarding":true,"theme":"dark","activeCustomTheme":"custom:senity"}\n' > "$CLAUDE_JSON"
     fi
 
     # ── MCP node_modules sicherstellen ──
