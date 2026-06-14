@@ -181,9 +181,9 @@ ACCENT_256=199        # Pink-Glow
 
 ### Klickbare Links / Warp
 
-Der Linkifier erkennt Weblinks, Dateien und Ordner und mappt Containerpfade ueber `SENITY_LINK_PATH_MAP` auf Hostpfade. Relative Pfade werden gegen das aktuelle Arbeitsverzeichnis, `/workspace` und direkte Projektordner unter `/workspace/projects/` aufgeloest. Vorhandene OSC-8-Links werden respektiert; weitere Pfade im selben Output-Chunk werden trotzdem verlinkt.
+Der Linkifier erkennt Weblinks, Dateien und Ordner und mappt Containerpfade ueber `SENITY_LINK_PATH_MAP` auf Hostpfade. Relative Pfade werden gegen das aktuelle Arbeitsverzeichnis, `/workspace` und direkte Projektordner unter `/workspace/projects/` aufgeloest. Vorhandene OSC-8-Links werden respektiert; weitere Pfade im selben Output-Chunk werden trotzdem verlinkt. Sobald Claude Code im Fullscreen-/Alternate-Screen-Modus laeuft, bleibt Nutztext standardmaessig unveraendert, weil Link-Escape-Sequenzen und sichtbare Pfad-Umschreibungen sonst das TUI-Layout zerlegen koennen.
 
-Warp behandelt Claude Code als TUI/Fullscreen-App und reicht Mausereignisse standardmaessig an die App weiter. Deshalb setzt Senity `SENITY_STRIP_MOUSE_REPORTING=auto`: Bei Warp werden Mouse-Reporting- und Scrollrad-Arrow-Enable-Sequenzen entfernt, damit Scrollen und `CTRL`+Klick besser funktionieren. Zusaetzlich setzt Senity `SENITY_VISIBLE_HOST_PATHS=auto`: Bei Warp werden Pfade nur dort sichtbar umgeschrieben, wo die Zeile nicht wie eine Tabelle/Box aussieht. Ordnerpfade werden als Hostpfade wie `D:\...\workspace\...` ausgegeben; Dateien als sichtbare `file:///...`-Links, weil Warp dieses URL-Protokoll nativ oeffnet.
+Warp behandelt Claude Code als TUI/Fullscreen-App und reicht Mausereignisse standardmaessig an die App weiter. Deshalb setzt Senity `SENITY_STRIP_MOUSE_REPORTING=auto`: Bei Warp werden Mouse-Reporting- und Scrollrad-Arrow-Enable-Sequenzen entfernt, damit Scrollen funktioniert. `SENITY_VISIBLE_HOST_PATHS=auto` wirkt nur ausserhalb des Fullscreen-Modus, z.B. bei `--test-links`: Ordnerpfade werden als Hostpfade wie `D:\...\workspace\...` ausgegeben; Dateien als sichtbare `file:///...`-Links, weil Warp dieses URL-Protokoll nativ oeffnet.
 
 Steuerung:
 
@@ -224,6 +224,10 @@ SENITY_VISIBLE_HOST_PATHS=0
 
 # Hostpfade immer sichtbar machen (kann Tabellen/Boxen optisch zerlegen)
 SENITY_VISIBLE_HOST_PATHS=1
+
+# Experimentell: Linkifier auch in Claude-Code-Fullscreen-Ausgabe aktivieren
+# Kann Initial Prompt, Tabellen und Chat-Rendering zerlegen.
+SENITY_LINKIFY_IN_TUI=1
 ```
 
 Aenderungen an `senity-theme.conf` benoetigen einen Image-Rebuild:

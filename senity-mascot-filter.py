@@ -104,6 +104,7 @@ TERMINAL_ESCAPE_RE = re.compile(
 ANSI_SGR_RE = re.compile(rb"\x1b\[[0-?]*[ -/]*m")
 CSI_PRIVATE_MODE_RE = re.compile(rb"^\x1b\[\?([0-9;]*)([hl])$")
 MOUSE_MODE_PARAMS = {b"9", b"1000", b"1002", b"1003", b"1005", b"1006", b"1007", b"1015", b"1016"}
+ALT_SCREEN_PARAMS = {b"47", b"1047", b"1049"}
 LINK_TOKEN = rb"[^\s<>()\[\]{}\"'`:|\x1b]+"
 URL_OR_PATH_RE = re.compile(
     rb"(?P<url>(?:https?|ftp)://[^\s<>()\[\]{}\"'`\x1b]+)"
@@ -122,6 +123,7 @@ TRAILING_PUNCT = b".,;!?:"
 _PATH_MAPS = None
 _RECENT_CONTAINER_DIRS: list[str] = []
 MAX_RECENT_CONTAINER_DIRS = 32
+IN_FULLSCREEN_TUI = False
 
 
 def _strip_mouse_reporting_enabled() -> bool:
@@ -135,6 +137,14 @@ def _strip_mouse_reporting_enabled() -> bool:
 
 
 STRIP_MOUSE_REPORTING = _strip_mouse_reporting_enabled()
+
+
+def _linkify_in_tui_enabled() -> bool:
+    value = os.environ.get("SENITY_LINKIFY_IN_TUI", "0").lower()
+    return value in ("1", "true", "yes", "on")
+
+
+LINKIFY_IN_TUI = _linkify_in_tui_enabled()
 
 
 def _visible_host_paths_mode() -> str:
@@ -463,12 +473,16 @@ def _osc8_uri_part(seq: bytes):
 
 
 def _filter_terminal_escape(seq: bytes) -> bytes:
+    global IN_FULLSCREEN_TUI
+    m = CSI_PRIVATE_MODE_RE.match(seq)
+    if m:
+        params = [p for p in m.group(1).split(b";") if p]
+        if any(p in ALT_SCREEN_PARAMS for p in params):
+            IN_FULLSCREEN_TUI = m.group(2) == b"h"
     if not STRIP_MOUSE_REPORTING:
         return seq
-    m = CSI_PRIVATE_MODE_RE.match(seq)
     if not m or m.group(2) != b"h":
         return seq
-    params = [p for p in m.group(1).split(b";") if p]
     if not any(p in MOUSE_MODE_PARAMS for p in params):
         return seq
     kept = [p for p in params if p not in MOUSE_MODE_PARAMS]
@@ -537,6 +551,16 @@ def _linkify_ansi_run(run: bytes) -> bytes:
     return _linkify_visible_bytes(run, bytes(visible), visible_to_raw)
 
 
+def _should_linkify_text() -> bool:
+    return LINKIFY_IN_TUI or not IN_FULLSCREEN_TUI
+
+
+def _flush_linkify_run(out: bytearray, run: bytearray):
+    if run:
+        out.extend(_linkify_ansi_run(bytes(run)))
+        run.clear()
+
+
 def linkify_chunk(chunk: bytes) -> bytes:
     if not LINKIFY_ENABLED or not chunk:
         return chunk
@@ -546,35 +570,39 @@ def linkify_chunk(chunk: bytes) -> bytes:
     in_existing_link = False
     for esc in TERMINAL_ESCAPE_RE.finditer(chunk):
         if esc.start() > pos:
+            text_segment = chunk[pos:esc.start()]
             if in_existing_link:
-                out.extend(chunk[pos:esc.start()])
+                out.extend(text_segment)
+            elif _should_linkify_text():
+                run.extend(text_segment)
             else:
-                run.extend(chunk[pos:esc.start()])
+                out.extend(text_segment)
         seq = esc.group(0)
         existing_uri = _osc8_uri_part(seq)
         if existing_uri is not None:
-            if run:
-                out.extend(_linkify_ansi_run(bytes(run)))
-                run.clear()
+            _flush_linkify_run(out, run)
             out.extend(seq)
             in_existing_link = bool(existing_uri)
         elif in_existing_link:
             out.extend(seq)
         elif ANSI_SGR_RE.fullmatch(seq):
-            run.extend(seq)
+            if _should_linkify_text():
+                run.extend(seq)
+            else:
+                out.extend(seq)
         else:
-            if run:
-                out.extend(_linkify_ansi_run(bytes(run)))
-                run.clear()
+            _flush_linkify_run(out, run)
             out.extend(_filter_terminal_escape(seq))
         pos = esc.end()
     if pos < len(chunk):
+        text_segment = chunk[pos:]
         if in_existing_link:
-            out.extend(chunk[pos:])
+            out.extend(text_segment)
+        elif _should_linkify_text():
+            run.extend(text_segment)
         else:
-            run.extend(chunk[pos:])
-    if run:
-        out.extend(_linkify_ansi_run(bytes(run)))
+            out.extend(text_segment)
+    _flush_linkify_run(out, run)
     return bytes(out)
 
 

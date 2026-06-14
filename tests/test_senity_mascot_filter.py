@@ -18,6 +18,7 @@ class SenityMascotFilterTests(unittest.TestCase):
         keys = {
             "SENITY_FILE_LINK_FORMAT",
             "SENITY_HOST_TERM_PROGRAM",
+            "SENITY_LINKIFY_IN_TUI",
             "SENITY_LINK_PATH_MAP",
             "SENITY_STRIP_MOUSE_REPORTING",
             "SENITY_VISIBLE_HOST_PATHS",
@@ -170,6 +171,34 @@ class SenityMascotFilterTests(unittest.TestCase):
             out = mod.linkify_chunk(b"\x1b[?1007h\x1b[?1049h")
             self.assertNotIn(b"\x1b[?1007h", out)
             self.assertIn(b"\x1b[?1049h", out)
+
+        self._with_filter(self._env(SENITY_HOST_TERM_PROGRAM="WarpTerminal"), run)
+
+    def test_fullscreen_tui_text_is_not_linkified_by_default(self):
+        def run(mod):
+            out = mod.linkify_chunk(b"\x1b[?1049h/workspace/projects/autostart/INITIAL_PROMPT.md")
+            self.assertIn(b"\x1b[?1049h", out)
+            self.assertIn(b"/workspace/projects/autostart/INITIAL_PROMPT.md", out)
+            self.assertNotIn(b"file:///D:/Host/workspace/projects/autostart/INITIAL_PROMPT.md", out)
+            self.assertNotIn(b"\x1b]8;id=senity-", out)
+
+        self._with_filter(self._env(SENITY_HOST_TERM_PROGRAM="WarpTerminal"), run)
+
+    def test_fullscreen_tui_linkify_can_be_enabled_explicitly(self):
+        def run(mod):
+            out = mod.linkify_chunk(b"\x1b[?1049h/workspace/projects/autostart/INITIAL_PROMPT.md")
+            self.assertIn(b"file:///D:/Host/workspace/projects/autostart/INITIAL_PROMPT.md", out)
+
+        self._with_filter(
+            self._env(SENITY_HOST_TERM_PROGRAM="WarpTerminal", SENITY_LINKIFY_IN_TUI="1"),
+            run,
+        )
+
+    def test_linkify_resumes_after_fullscreen_tui_exits(self):
+        def run(mod):
+            mod.linkify_chunk(b"\x1b[?1049h/workspace/projects/autostart/INITIAL_PROMPT.md")
+            out = mod.linkify_chunk(b"\x1b[?1049l/workspace/projects/autostart/INITIAL_PROMPT.md")
+            self.assertIn(b"file:///D:/Host/workspace/projects/autostart/INITIAL_PROMPT.md", out)
 
         self._with_filter(self._env(SENITY_HOST_TERM_PROGRAM="WarpTerminal"), run)
 
