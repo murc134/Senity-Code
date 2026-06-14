@@ -1524,6 +1524,7 @@ $dockerArgs += @(
     "-e", "SENITY_HOST_TERM_PROGRAM=$($env:TERM_PROGRAM)",
     "-e", "SENITY_STRIP_MOUSE_REPORTING=$stripMouseReporting",
     "-e", "SENITY_FILE_LINK_FORMAT=$($env:SENITY_FILE_LINK_FORMAT)",
+    "-e", "SENITY_VISIBLE_HOST_PATHS=$($env:SENITY_VISIBLE_HOST_PATHS)",
     "-e", "SENITY_LINKIFY=1",
     "-e", "SENITY_LINK_PATH_MAP=$linkPathMapJson"
 )

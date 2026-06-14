@@ -20,6 +20,7 @@ class SenityMascotFilterTests(unittest.TestCase):
             "SENITY_HOST_TERM_PROGRAM",
             "SENITY_LINK_PATH_MAP",
             "SENITY_STRIP_MOUSE_REPORTING",
+            "SENITY_VISIBLE_HOST_PATHS",
             "TERM_PROGRAM",
         }
         old = {key: os.environ.get(key) for key in keys}
@@ -96,6 +97,27 @@ class SenityMascotFilterTests(unittest.TestCase):
             self.assertIn(b"/workspace/projects/\x1b[0m\x1b[94mautostart/INITIAL_PROMPT.md", out)
 
         self._with_filter(self._env(), run)
+
+    def test_warp_renders_host_path_visibly_for_native_file_detection(self):
+        def run(mod):
+            out = mod.linkify_chunk(b"/workspace/projects/autostart/INITIAL_PROMPT.md")
+            self._assert_link(out, "file:///D:/Host/workspace/projects/autostart/INITIAL_PROMPT.md")
+            self.assertIn(b"D:\\Host\\workspace\\projects\\autostart\\INITIAL_PROMPT.md", out)
+            self.assertNotIn(b"/workspace/projects/autostart/INITIAL_PROMPT.md\x1b]8;;", out)
+
+        self._with_filter(self._env(SENITY_HOST_TERM_PROGRAM="WarpTerminal"), run)
+
+    def test_visible_host_path_fallback_can_be_disabled(self):
+        def run(mod):
+            out = mod.linkify_chunk(b"/workspace/projects/autostart/INITIAL_PROMPT.md")
+            self._assert_link(out, "file:///D:/Host/workspace/projects/autostart/INITIAL_PROMPT.md")
+            self.assertIn(b"/workspace/projects/autostart/INITIAL_PROMPT.md", out)
+            self.assertNotIn(b"D:\\Host\\workspace", out)
+
+        self._with_filter(
+            self._env(SENITY_HOST_TERM_PROGRAM="WarpTerminal", SENITY_VISIBLE_HOST_PATHS="0"),
+            run,
+        )
 
     def test_vscode_file_link_format_includes_line_and_column(self):
         def run(mod):

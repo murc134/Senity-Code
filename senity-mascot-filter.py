@@ -135,6 +135,19 @@ def _strip_mouse_reporting_enabled() -> bool:
 STRIP_MOUSE_REPORTING = _strip_mouse_reporting_enabled()
 
 
+def _visible_host_paths_enabled() -> bool:
+    value = os.environ.get("SENITY_VISIBLE_HOST_PATHS", "auto").lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    host_term = os.environ.get("SENITY_HOST_TERM_PROGRAM") or os.environ.get("TERM_PROGRAM", "")
+    return "warp" in host_term.lower()
+
+
+VISIBLE_HOST_PATHS = _visible_host_paths_enabled()
+
+
 def _is_windows_abs(path_text: str) -> bool:
     return bool(WINDOWS_ABS_RE.match(path_text)) or path_text.startswith("\\\\")
 
@@ -247,6 +260,17 @@ def _editor_uri(host_path: str, line: str | None = None, col: str | None = None)
     return f"{fmt}://file/" + urllib.parse.quote(path_part, safe="/:") + suffix
 
 
+def _visible_host_label(host_path: str, original_path: str, line: str | None, col: str | None) -> bytes:
+    label = host_path
+    if original_path.endswith(("/", "\\")) and not label.endswith(("/", "\\")):
+        label += "\\" if _is_windows_abs(label) else "/"
+    if line:
+        label += f":{line}"
+        if col:
+            label += f":{col}"
+    return label.encode("utf-8", "replace")
+
+
 def _split_location(path_text: str):
     m = LOCATION_RE.match(path_text)
     if not m:
@@ -273,18 +297,23 @@ def _resolve_container_path(path_text: str):
     return None
 
 
-def _path_uri_for(raw: bytes):
+def _path_target_for(raw: bytes):
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         return None
     path_text, _line, _col = _split_location(text)
     if _is_windows_abs(path_text):
-        return _editor_uri(path_text, _line, _col)
+        uri = _editor_uri(path_text, _line, _col)
+        label = _visible_host_label(path_text, path_text, _line, _col) if VISIBLE_HOST_PATHS else None
+        return uri, label
     container_path = _resolve_container_path(path_text)
     if not container_path:
         return None
-    return _editor_uri(_container_to_host_path(container_path), _line, _col)
+    host_path = _container_to_host_path(container_path)
+    uri = _editor_uri(host_path, _line, _col)
+    label = _visible_host_label(host_path, path_text, _line, _col) if VISIBLE_HOST_PATHS else None
+    return uri, label
 
 
 def _trim_trailing(raw: bytes):
@@ -351,10 +380,12 @@ def _linkify_visible_bytes(raw_run: bytes, visible: bytes, visible_to_raw: list[
             except UnicodeDecodeError:
                 out.extend(raw_run[raw_start:raw_end])
         else:
-            uri = _path_uri_for(core)
-            if uri:
+            target = _path_target_for(core)
+            if target:
+                uri, label_override = target
                 core_raw_end = visible_to_raw[m.start() + len(core) - 1] + 1
-                out.extend(_osc8(uri, raw_run[raw_start:core_raw_end]))
+                label = label_override if label_override is not None else raw_run[raw_start:core_raw_end]
+                out.extend(_osc8(uri, label))
                 out.extend(raw_run[core_raw_end:raw_end])
             else:
                 out.extend(raw_run[raw_start:raw_end])
