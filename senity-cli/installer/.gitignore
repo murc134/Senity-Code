@@ -1,0 +1,3 @@
+# Build-Artefakte (ISCC-Output) nicht committen.
+dist/
+*.exe

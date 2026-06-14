@@ -27,6 +27,9 @@ import os
 import sys
 import time
 import re
+import json
+import hashlib
+import urllib.parse
 import fcntl
 import struct
 import termios
@@ -85,6 +88,341 @@ ARC_TITLE_RE = re.compile(
 OSC_TITLE_RE = re.compile(
     rb"(\x1b\]0;[^\x07\x1b]*?)Claude Code([^\x07\x1b]*?(?:\x07|\x1b\\))"
 )
+
+# Terminal-Hyperlinks: OSC 8. Der Filter laeuft im Container, das Terminal
+# sitzt aber auf dem Host. Deshalb bekommt er vom Launcher eine Mapping-Liste
+# Containerpfad -> Hostpfad und verlinkt sichtbare URLs/Dateipfade.
+LINKIFY_ENABLED = os.environ.get("SENITY_LINKIFY", "1").lower() not in (
+    "0", "false", "no", "off"
+)
+OSC8_MARKER = b"\x1b]8;"
+TERMINAL_ESCAPE_RE = re.compile(
+    rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|"
+    rb"\x1b\[[0-?]*[ -/]*[@-~]|"
+    rb"\x1b[@-Z\\-_]"
+)
+ANSI_SGR_RE = re.compile(rb"\x1b\[[0-?]*[ -/]*m")
+CSI_PRIVATE_MODE_RE = re.compile(rb"^\x1b\[\?([0-9;]*)([hl])$")
+MOUSE_MODE_PARAMS = {b"9", b"1000", b"1002", b"1003", b"1005", b"1006", b"1015", b"1016"}
+LINK_TOKEN = rb"[^\s<>()\[\]{}\"'`:|\x1b]+"
+URL_OR_PATH_RE = re.compile(
+    rb"(?P<url>(?:https?|ftp)://[^\s<>()\[\]{}\"'`\x1b]+)"
+    rb"|(?P<path>"
+    rb"(?:/workspace(?:" + rb"/" + LINK_TOKEN + rb")*/?)(?::\d+(?::\d+)?)?"
+    rb"|(?:[A-Za-z]:[\\/](?:" + LINK_TOKEN + rb"[\\/])*" + LINK_TOKEN + rb")(?::\d+(?::\d+)?)?"
+    rb"|(?:\.{1,2}[\\/](?:" + LINK_TOKEN + rb"[\\/])*" + LINK_TOKEN + rb")(?::\d+(?::\d+)?)?"
+    rb"|(?:[A-Za-z0-9_.@+-]+[\\/])+" + LINK_TOKEN + rb"(?::\d+(?::\d+)?)?"
+    rb"|(?:[A-Za-z0-9_.@+-]+[\\/])(?::\d+(?::\d+)?)?"
+    rb"|(?:[A-Za-z0-9_.@+-]+\.[A-Za-z][A-Za-z0-9_+-]{0,11}|\.[A-Za-z0-9_-]{2,})(?::\d+(?::\d+)?)?"
+    rb")"
+)
+LOCATION_RE = re.compile(r"^(?P<path>.+?)(?::(?P<line>\d+)(?::(?P<col>\d+))?)?$")
+WINDOWS_ABS_RE = re.compile(r"^[A-Za-z]:[\\/]")
+TRAILING_PUNCT = b".,;!?:"
+_PATH_MAPS = None
+
+
+def _strip_mouse_reporting_enabled() -> bool:
+    value = os.environ.get("SENITY_STRIP_MOUSE_REPORTING", "auto").lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    host_term = os.environ.get("SENITY_HOST_TERM_PROGRAM") or os.environ.get("TERM_PROGRAM", "")
+    return "warp" in host_term.lower()
+
+
+STRIP_MOUSE_REPORTING = _strip_mouse_reporting_enabled()
+
+
+def _is_windows_abs(path_text: str) -> bool:
+    return bool(WINDOWS_ABS_RE.match(path_text)) or path_text.startswith("\\\\")
+
+
+def _add_path_map(maps, container_path, host_path):
+    if not container_path or not host_path:
+        return
+    container_path = container_path.rstrip("/") or "/"
+    if not container_path.startswith("/"):
+        return
+    pair = (container_path, host_path)
+    if pair not in maps:
+        maps.append(pair)
+
+
+def _load_path_maps():
+    global _PATH_MAPS
+    if _PATH_MAPS is not None:
+        return _PATH_MAPS
+    maps = []
+    raw = os.environ.get("SENITY_LINK_PATH_MAP", "").strip()
+    if raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                    _add_path_map(maps, item.get("container"), item.get("host"))
+        except Exception:
+            pass
+    _add_path_map(maps, "/workspace/.claude", os.environ.get("SENITY_HOST_CLAUDE_DIR"))
+    _add_path_map(maps, "/workspace", os.environ.get("SENITY_HOST_WORKSPACE"))
+    maps.sort(key=lambda item: len(item[0]), reverse=True)
+    _PATH_MAPS = maps
+    return maps
+
+
+def _host_join(base: str, rel: str) -> str:
+    if not rel:
+        return base
+    if _is_windows_abs(base):
+        return base.rstrip("\\/") + "\\" + rel.replace("/", "\\")
+    return base.rstrip("/") + "/" + rel
+
+
+def _container_to_host_path(container_path: str) -> str:
+    container_path = os.path.normpath(container_path).replace("\\", "/")
+    for container_base, host_base in _load_path_maps():
+        base = container_base.rstrip("/") or "/"
+        if container_path == base or container_path.startswith(base + "/"):
+            rel = container_path[len(base):].lstrip("/")
+            return _host_join(host_base, rel)
+    return container_path
+
+
+def _relative_search_roots():
+    roots = []
+
+    def add(root):
+        root = os.path.normpath(root).replace("\\", "/")
+        if root not in roots:
+            roots.append(root)
+
+    add(os.getcwd())
+    add("/workspace")
+    try:
+        for name in os.listdir("/workspace/projects"):
+            candidate = os.path.join("/workspace/projects", name)
+            if os.path.isdir(candidate):
+                add(candidate)
+    except OSError:
+        pass
+    for container_base, _host_base in _load_path_maps():
+        if not container_base.startswith("/workspace/projects/"):
+            continue
+        try:
+            if os.path.isdir(container_base):
+                add(container_base)
+        except OSError:
+            continue
+    return roots
+
+
+def _file_uri(host_path: str) -> str:
+    if host_path.startswith("\\\\"):
+        unc = host_path.lstrip("\\").replace("\\", "/")
+        return "file://" + urllib.parse.quote(unc, safe="/:")
+    if _is_windows_abs(host_path):
+        path_part = host_path.replace("\\", "/")
+        return "file:///" + urllib.parse.quote(path_part, safe="/:")
+    path_part = host_path.replace("\\", "/")
+    if not path_part.startswith("/"):
+        path_part = os.path.abspath(path_part)
+    return "file://" + urllib.parse.quote(path_part, safe="/:")
+
+
+def _editor_uri(host_path: str, line: str | None = None, col: str | None = None) -> str:
+    fmt = os.environ.get("SENITY_FILE_LINK_FORMAT", "file").strip().lower()
+    if fmt not in ("vscode", "vscode-insiders", "vscodium", "cursor", "windsurf"):
+        return _file_uri(host_path)
+    path_part = host_path.replace("\\", "/")
+    if path_part.startswith("//"):
+        path_part = path_part.lstrip("/")
+    suffix = ""
+    if line:
+        suffix = f":{line}"
+        if col:
+            suffix += f":{col}"
+    return f"{fmt}://file/" + urllib.parse.quote(path_part, safe="/:") + suffix
+
+
+def _split_location(path_text: str):
+    m = LOCATION_RE.match(path_text)
+    if not m:
+        return path_text, None, None
+    return m.group("path"), m.group("line"), m.group("col")
+
+
+def _resolve_container_path(path_text: str):
+    path_text = path_text.replace("\\", "/")
+    candidates = []
+    if path_text.startswith("/"):
+        candidates.append(os.path.normpath(path_text))
+    else:
+        for root in _relative_search_roots():
+            candidate = os.path.normpath(os.path.join(root, path_text))
+            if candidate not in candidates:
+                candidates.append(candidate)
+    for candidate in candidates:
+        try:
+            if os.path.lexists(candidate):
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def _path_uri_for(raw: bytes):
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    path_text, _line, _col = _split_location(text)
+    if _is_windows_abs(path_text):
+        return _editor_uri(path_text, _line, _col)
+    container_path = _resolve_container_path(path_text)
+    if not container_path:
+        return None
+    return _editor_uri(_container_to_host_path(container_path), _line, _col)
+
+
+def _trim_trailing(raw: bytes):
+    end = len(raw)
+    while end > 0 and raw[end - 1:end] in TRAILING_PUNCT:
+        end -= 1
+    return raw[:end], raw[end:]
+
+
+def _osc8(uri: str, label: bytes) -> bytes:
+    uri_bytes = uri.encode("ascii", "ignore")
+    link_id = hashlib.sha256(uri_bytes).hexdigest()[:16].encode("ascii")
+    return b"\x1b]8;id=senity-" + link_id + b";" + uri_bytes + b"\x1b\\" + label + b"\x1b]8;;\x1b\\"
+
+
+def _osc8_uri_part(seq: bytes):
+    if not seq.startswith(OSC8_MARKER):
+        return None
+    if seq.endswith(b"\x1b\\"):
+        body = seq[len(OSC8_MARKER):-2]
+    elif seq.endswith(b"\x07"):
+        body = seq[len(OSC8_MARKER):-1]
+    else:
+        return None
+    _params, sep, uri = body.partition(b";")
+    if not sep:
+        return None
+    return uri
+
+
+def _filter_terminal_escape(seq: bytes) -> bytes:
+    if not STRIP_MOUSE_REPORTING:
+        return seq
+    m = CSI_PRIVATE_MODE_RE.match(seq)
+    if not m or m.group(2) != b"h":
+        return seq
+    params = [p for p in m.group(1).split(b";") if p]
+    if not any(p in MOUSE_MODE_PARAMS for p in params):
+        return seq
+    kept = [p for p in params if p not in MOUSE_MODE_PARAMS]
+    if not kept:
+        return b""
+    return b"\x1b[?" + b";".join(kept) + b"h"
+
+
+def _linkify_visible_bytes(raw_run: bytes, visible: bytes, visible_to_raw: list[int]) -> bytes:
+    out = bytearray()
+    raw_pos = 0
+    for m in URL_OR_PATH_RE.finditer(visible):
+        raw_start = visible_to_raw[m.start()]
+        raw_end = visible_to_raw[m.end() - 1] + 1
+        out.extend(raw_run[raw_pos:raw_start])
+
+        visible_match = m.group(0)
+        core, _suffix = _trim_trailing(visible_match)
+        if not core:
+            out.extend(raw_run[raw_start:raw_end])
+        elif m.group("url"):
+            try:
+                uri = core.decode("utf-8")
+                core_raw_end = visible_to_raw[m.start() + len(core) - 1] + 1
+                out.extend(_osc8(uri, raw_run[raw_start:core_raw_end]))
+                out.extend(raw_run[core_raw_end:raw_end])
+            except UnicodeDecodeError:
+                out.extend(raw_run[raw_start:raw_end])
+        else:
+            uri = _path_uri_for(core)
+            if uri:
+                core_raw_end = visible_to_raw[m.start() + len(core) - 1] + 1
+                out.extend(_osc8(uri, raw_run[raw_start:core_raw_end]))
+                out.extend(raw_run[core_raw_end:raw_end])
+            else:
+                out.extend(raw_run[raw_start:raw_end])
+        raw_pos = raw_end
+    out.extend(raw_run[raw_pos:])
+    return bytes(out)
+
+
+def _linkify_ansi_run(run: bytes) -> bytes:
+    if not run:
+        return run
+    visible = bytearray()
+    visible_to_raw = []
+    pos = 0
+    for esc in TERMINAL_ESCAPE_RE.finditer(run):
+        if esc.start() > pos:
+            segment = run[pos:esc.start()]
+            visible.extend(segment)
+            visible_to_raw.extend(range(pos, esc.start()))
+        pos = esc.end()
+    if pos < len(run):
+        segment = run[pos:]
+        visible.extend(segment)
+        visible_to_raw.extend(range(pos, len(run)))
+    if not visible:
+        return run
+    return _linkify_visible_bytes(run, bytes(visible), visible_to_raw)
+
+
+def linkify_chunk(chunk: bytes) -> bytes:
+    if not LINKIFY_ENABLED or not chunk:
+        return chunk
+    out = bytearray()
+    run = bytearray()
+    pos = 0
+    in_existing_link = False
+    for esc in TERMINAL_ESCAPE_RE.finditer(chunk):
+        if esc.start() > pos:
+            if in_existing_link:
+                out.extend(chunk[pos:esc.start()])
+            else:
+                run.extend(chunk[pos:esc.start()])
+        seq = esc.group(0)
+        existing_uri = _osc8_uri_part(seq)
+        if existing_uri is not None:
+            if run:
+                out.extend(_linkify_ansi_run(bytes(run)))
+                run.clear()
+            out.extend(seq)
+            in_existing_link = bool(existing_uri)
+        elif in_existing_link:
+            out.extend(seq)
+        elif ANSI_SGR_RE.fullmatch(seq):
+            run.extend(seq)
+        else:
+            if run:
+                out.extend(_linkify_ansi_run(bytes(run)))
+                run.clear()
+            out.extend(_filter_terminal_escape(seq))
+        pos = esc.end()
+    if pos < len(chunk):
+        if in_existing_link:
+            out.extend(chunk[pos:])
+        else:
+            run.extend(chunk[pos:])
+    if run:
+        out.extend(_linkify_ansi_run(bytes(run)))
+    return bytes(out)
 
 
 def rewrite_titles_in_chunk(chunk: bytes) -> bytes:
@@ -287,7 +625,7 @@ def flush_buffer() -> bytes:
 def master_read(fd):
     data = os.read(fd, 8192)
     if _state["off"]:
-        return data
+        return linkify_chunk(data)
     if _state["start"] is None:
         _state["start"] = time.monotonic()
     if time.monotonic() - _state["start"] > FILTER_SECONDS:
@@ -298,7 +636,7 @@ def master_read(fd):
     # Chunk-Level: Arc-Title + OSC-Title rewrite (vor dem Line-Buffering, weil
     # die Welcome-Box \r\x1b[1B als Zeilenseparator benutzt, nicht \n).
     data = rewrite_titles_in_chunk(data)
-    return process_chunk(data)
+    return linkify_chunk(process_chunk(data))
 
 
 def stdin_read(fd):
@@ -434,7 +772,7 @@ def _spawn_filtered(argv):
                 # rewrite_titles_in_chunk + process_chunk anwenden.
                 if _state["off"]:
                     try:
-                        os.write(stdout_fd, chunk)
+                        os.write(stdout_fd, linkify_chunk(chunk))
                     except OSError:
                         break
                 else:
@@ -443,7 +781,7 @@ def _spawn_filtered(argv):
                     if time.monotonic() - _state["start"] > FILTER_SECONDS:
                         _state["off"] = True
                         try:
-                            os.write(stdout_fd, chunk)
+                            os.write(stdout_fd, linkify_chunk(chunk))
                         except OSError:
                             break
                     else:
@@ -454,7 +792,7 @@ def _spawn_filtered(argv):
                         # wuerde alles bis FILTER_SECONDS zurueckhalten.
                         chunk2 = rewrite_titles_in_chunk(chunk)
                         try:
-                            os.write(stdout_fd, chunk2)
+                            os.write(stdout_fd, linkify_chunk(chunk2))
                         except OSError:
                             break
             if stdin_fd in r:

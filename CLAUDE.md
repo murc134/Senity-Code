@@ -14,7 +14,6 @@ das Repo-Setup, das vor jedem Container-Start läuft.
 | `.env` | Gitignored: Proxy-Credentials (`SENITY_CHAT_PROXY_URL`, `SENITY_CHAT_PROXY_KEY`) |
 | `INITIAL_PROMPT.md` | Wird bei jedem Start gelesen und Claude Code via `--append-system-prompt` mitgegeben |
 | `.bindings` | Committet als initialer Zustand. Launcher setzt einmalig `git update-index --skip-worktree`, danach erscheinen lokale Edits (interaktiver Workspace-Pfad, eigene Mounts) nicht mehr im `git status` |
-
 Die `.sh`/`.ps1`/`.bat` müssen funktional **gleichwertig** bleiben. Die `.bat`
 ist ein reiner pwsh-Bootstrap — sie ruft `claude-senity.ps1 %*` auf und enthält
 selbst keine Launcher-Logik; jede `.ps1`-Änderung wirkt automatisch auch über
@@ -296,3 +295,18 @@ Jedes Ticket trägt zusätzlich:
 - **`metadata.worktree`** (optional, empfohlen): absoluter Pfad zum Git-Worktree (z.B. `D:/Devel/.worktrees/sts-1035`). Fehlt das Feld, wird nur eine Warning ausgegeben.
 
 Aus dem Worktree ist der Branch via `git rev-parse --abbrev-ref HEAD` ableitbar. Bestehende Tickets bekommen die Felder nachgezogen, sobald sie aktiv bearbeitet werden. Schema-Promotion in eigene Spalten ist Teil von STS-1035 (Ticket-Schema-Evolution).
+
+---
+
+# Projekt-Identitaet (auto-angefuegt 2026-05-31)
+
+| Feld | Wert |
+|------|------|
+| `project_key` | `CLI` |
+| Pfad | `D:/Devel/NodeJS/SDRv5/senity-code` |
+
+Vollstaendige projekt-spezifische Regeln siehe Template:
+`D:/Devel/NodeJS/_TEMPLATE_PROJECT_CLAUDE.md`
+
+Session-Start-Listing, KNOWLEDGE-Workflow und User-Profile gelten aus der
+globalen CLAUDE.md (`C:/Users/c4rtw/.claude/CLAUDE.md`).

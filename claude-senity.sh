@@ -282,6 +282,9 @@ launcher_self_update() {
 MODEL=""
 YOLO=true
 REBUILD=false
+TEST_LINKS=false
+MOUSE_REPORTING=false
+NO_MOUSE_REPORTING=false
 SHOW_HELP=false
 EXTRA=()
 
@@ -291,6 +294,9 @@ while [[ $# -gt 0 ]]; do
         --yolo)        YOLO=true; shift ;;
         --no-yolo)     YOLO=false; shift ;;
         --rebuild)     REBUILD=true; shift ;;
+        --test-links)  TEST_LINKS=true; shift ;;
+        --mouse-reporting) MOUSE_REPORTING=true; shift ;;
+        --no-mouse-reporting) NO_MOUSE_REPORTING=true; shift ;;
         -h|--help)     SHOW_HELP=true; shift ;;
         *)             EXTRA+=("$1"); shift ;;
     esac
@@ -326,6 +332,9 @@ if [[ "$SHOW_HELP" == true ]]; then
     printf "  ${c_white}  --yolo          Yolo Mode (Default: an, Container ist isoliert)${c_reset}\n"
     printf "  ${c_white}  --no-yolo       Yolo Mode deaktivieren (Permission-Prompts)${c_reset}\n"
     printf "  ${c_white}  --rebuild       Docker-Image neu bauen (force)${c_reset}\n"
+    printf "  ${c_white}  --test-links    Datei-/Ordner-/Weblink-Ausgabe testen${c_reset}\n"
+    printf "  ${c_white}  --mouse-reporting     Mausereignisse an Claude Code durchreichen${c_reset}\n"
+    printf "  ${c_white}  --no-mouse-reporting  Mausereignisse fuer Terminal-Links reservieren${c_reset}\n"
     printf "  ${c_white}  -h, --help      Diese Hilfe${c_reset}\n"
     echo ""
     exit 0
@@ -960,6 +969,36 @@ DOCKER_ARGS=(
     -v "${claude_dir}:/workspace/.claude"
     -w /workspace
 )
+LINK_PATH_MAPS=(
+    "/workspace=${workspace_path}"
+    "/workspace/.claude=${claude_dir}"
+)
+
+json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\r'/}"
+    s="${s//$'\n'/}"
+    printf '%s' "$s"
+}
+
+build_link_path_map_json() {
+    local first=true record container host
+    printf '['
+    for record in "${LINK_PATH_MAPS[@]}"; do
+        container="${record%%=*}"
+        host="${record#*=}"
+        [[ -z "$container" || -z "$host" ]] && continue
+        if [[ "$first" == true ]]; then
+            first=false
+        else
+            printf ','
+        fi
+        printf '{"container":"%s","host":"%s"}' "$(json_escape "$container")" "$(json_escape "$host")"
+    done
+    printf ']'
+}
 
 # .bindings ist im Repo enthalten (initial state nach Klon), aber lokale
 # Aenderungen sollen git nicht stoeren -> einmalig --skip-worktree setzen.
@@ -1135,6 +1174,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
             # Pfad normalisieren (loest .. auf, portabel ohne GNU realpath)
             full_host="$(cd "$full_host" && pwd)"
             DOCKER_ARGS+=(-v "${full_host}:${container_part}:${mount_mode}")
+            LINK_PATH_MAPS+=("${container_part}=${full_host}")
             write_ok "Mount: $full_host => $container_part ($mount_mode)"
             bind_count=$((bind_count + 1))
             append_exclude_overlays "$full_host" "$container_part"
@@ -1144,6 +1184,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
             file_parent="$(cd "$(dirname "$full_host")" && pwd)"
             full_host="${file_parent}/$(basename "$full_host")"
             DOCKER_ARGS+=(-v "${full_host}:${container_part}:${mount_mode}")
+            LINK_PATH_MAPS+=("${container_part}=${full_host}")
             write_ok "Mount: $full_host => $container_part ($mount_mode, file)"
             bind_count=$((bind_count + 1))
         else
@@ -1168,10 +1209,19 @@ if [[ -f "$gitconfig" ]]; then
 fi
 
 # Environment
+link_path_map_json="$(build_link_path_map_json)"
+strip_mouse_reporting="auto"
+if [[ "$MOUSE_REPORTING" == true ]]; then strip_mouse_reporting="0"; fi
+if [[ "$NO_MOUSE_REPORTING" == true ]]; then strip_mouse_reporting="1"; fi
 DOCKER_ARGS+=(-e "ANTHROPIC_BASE_URL=${base_url}")
 DOCKER_ARGS+=(-e "ANTHROPIC_API_KEY=${token}")
 DOCKER_ARGS+=(-e "HOME=/workspace")
 DOCKER_ARGS+=(-e "TERM=xterm-256color")
+DOCKER_ARGS+=(-e "SENITY_HOST_TERM_PROGRAM=${TERM_PROGRAM:-}")
+DOCKER_ARGS+=(-e "SENITY_STRIP_MOUSE_REPORTING=${strip_mouse_reporting}")
+DOCKER_ARGS+=(-e "SENITY_FILE_LINK_FORMAT=${SENITY_FILE_LINK_FORMAT:-}")
+DOCKER_ARGS+=(-e "SENITY_LINKIFY=1")
+DOCKER_ARGS+=(-e "SENITY_LINK_PATH_MAP=${link_path_map_json}")
 
 # Claude-Argumente
 CLAUDE_ARGS=("senity-mascot-filter" "claude" "--model" "$MODEL")
@@ -1236,6 +1286,36 @@ printf "  ${c_white}Yolo      : %s${c_reset}\n" "$YOLO"
 printf "  ${c_white}Container : %s${c_reset}\n" "$container_name"
 printf "  ${c_magenta}════════════════════════════════════════════${c_reset}\n"
 echo ""
+
+if [[ "$TEST_LINKS" == true ]]; then
+    printf "  ${c_green}Link-Test: CTRL gedrueckt halten und ueber die drei Zeilen fahren/klicken.${c_reset}\n"
+    echo ""
+    test_script='
+from pathlib import Path
+
+print("Senity Link-Test")
+print("Web     : https://example.com")
+
+file_candidates = [
+    Path("/workspace/projects/autostart/INITIAL_PROMPT.md"),
+    Path("/workspace/INITIAL_PROMPT.md"),
+]
+folder_candidates = [
+    Path("/workspace/projects/senity-workspace"),
+    Path("/workspace/projects/autostart"),
+    Path("/workspace"),
+]
+
+file_path = next((p for p in file_candidates if p.exists()), Path("/workspace"))
+folder_path = next((p for p in folder_candidates if p.exists()), Path("/workspace"))
+
+print(f"Datei   : {file_path}")
+print(f"Ordner  : {folder_path}/")
+'
+    docker run "${DOCKER_ARGS[@]}" senity-claude:latest senity-mascot-filter python3 -c "$test_script"
+    exit $?
+fi
+
 printf "  ${c_green}Starte Claude Code... (Ctrl+C zum Beenden)${c_reset}\n"
 echo ""
 

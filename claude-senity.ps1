@@ -6,6 +6,7 @@
 #   .\claude-senity.ps1 --yolo             # Yolo Mode (ungefragte Ausfuehrung)
 #   .\claude-senity.ps1 --model NAME       # Modell ueberschreiben
 #   .\claude-senity.ps1 --create-shortcut  # Desktop-Verknuepfung erstellen
+#   .\claude-senity.ps1 --test-links       # Link-Ausgabe im Terminal testen
 # ══════════════════════════════════════════════════════════════
 param(
     [Parameter(ValueFromRemainingArguments=$true)]
@@ -25,6 +26,9 @@ $Model = $null
 $Rebuild = $false
 $CreateShortcut = $false
 $UpdateWsl = $false
+$TestLinks = $false
+$MouseReporting = $false
+$NoMouseReporting = $false
 $Help = $false
 $Rest = @()
 
@@ -46,6 +50,12 @@ if ($AllArgs) {
             '-createshortcut'  { $CreateShortcut = $true }
             '-update-wsl'      { $UpdateWsl = $true }
             '-updatewsl'       { $UpdateWsl = $true }
+            '-test-links'      { $TestLinks = $true }
+            '-testlinks'       { $TestLinks = $true }
+            '-mouse-reporting' { $MouseReporting = $true }
+            '-mousereporting'  { $MouseReporting = $true }
+            '-no-mouse-reporting' { $NoMouseReporting = $true }
+            '-nomousereporting'   { $NoMouseReporting = $true }
             '-help'            { $Help = $true }
             '-h'               { $Help = $true }
             '-?'               { $Help = $true }
@@ -75,6 +85,9 @@ function Get-OriginalLauncherArgs {
     if ($Rebuild)        { $a += '-Rebuild' }
     if ($CreateShortcut) { $a += '-CreateShortcut' }
     if ($UpdateWsl)      { $a += '-UpdateWsl' }
+    if ($TestLinks)      { $a += '-TestLinks' }
+    if ($MouseReporting) { $a += '-MouseReporting' }
+    if ($NoMouseReporting) { $a += '-NoMouseReporting' }
     if ($Help)           { $a += '-Help' }
     if ($Rest)           { $a += $Rest }
     return ,$a
@@ -1321,6 +1334,10 @@ $dockerArgs = @(
     "-v", "$(ConvertTo-DockerPath $claudeDir):/workspace/.claude",
     "-w", "/workspace"
 )
+$linkPathMaps = @(
+    [pscustomobject]@{ container = "/workspace";         host = [System.IO.Path]::GetFullPath($workspacePath) },
+    [pscustomobject]@{ container = "/workspace/.claude"; host = [System.IO.Path]::GetFullPath($claudeDir) }
+)
 
 # .bindings ist im Repo enthalten (initial state nach Klon), aber lokale
 # Aenderungen sollen git nicht stoeren -> einmalig --skip-worktree setzen.
@@ -1469,6 +1486,7 @@ Get-Content $bindingsFile -Encoding UTF8 | ForEach-Object {
         if (Test-Path $canonicalized) {
             $dockerArgs += "-v"
             $dockerArgs += "$(ConvertTo-DockerPath $canonicalized):${containerPart}:${mountMode}"
+            $linkPathMaps += [pscustomobject]@{ container = $containerPart; host = $canonicalized }
             Write-OK "Mount: $canonicalized => $containerPart ($mountMode)"
             $bindCount++
             $overlayArgs = Get-BindingOverlayArgs -Source $canonicalized -ContainerBase $containerPart -Patterns $excludePatterns -EmptyDir $emptyDir -EmptyFile $emptyFile
@@ -1494,11 +1512,20 @@ if ($overlayCount -gt 0) {
 if (Test-Path $sshDir)    { $dockerArgs += @("-v", "$(ConvertTo-DockerPath $sshDir):/workspace/.ssh:ro") }
 if (Test-Path $gitconfig) { $dockerArgs += @("-v", "$(ConvertTo-DockerPath $gitconfig):/workspace/.gitconfig:ro") }
 
+$linkPathMapJson = $linkPathMaps | ConvertTo-Json -Compress
+$stripMouseReporting = 'auto'
+if ($MouseReporting) { $stripMouseReporting = '0' }
+if ($NoMouseReporting) { $stripMouseReporting = '1' }
 $dockerArgs += @(
     "-e", "ANTHROPIC_BASE_URL=$baseUrl",
     "-e", "ANTHROPIC_API_KEY=$token",
     "-e", "HOME=/workspace",
-    "-e", "TERM=xterm-256color"
+    "-e", "TERM=xterm-256color",
+    "-e", "SENITY_HOST_TERM_PROGRAM=$($env:TERM_PROGRAM)",
+    "-e", "SENITY_STRIP_MOUSE_REPORTING=$stripMouseReporting",
+    "-e", "SENITY_FILE_LINK_FORMAT=$($env:SENITY_FILE_LINK_FORMAT)",
+    "-e", "SENITY_LINKIFY=1",
+    "-e", "SENITY_LINK_PATH_MAP=$linkPathMapJson"
 )
 
 $claudeArgs = @()
@@ -1560,6 +1587,36 @@ Write-Host "  Yolo      : $([bool]$yolo)" -ForegroundColor White
 Write-Host "  Container : $containerName" -ForegroundColor White
 Write-Host "  ════════════════════════════════════════════" -ForegroundColor Magenta
 Write-Host ""
+
+if ($TestLinks) {
+    Write-Host "  Link-Test: STRG gedrueckt halten und ueber die drei Zeilen fahren/klicken." -ForegroundColor Green
+    Write-Host ""
+    $testScript = @'
+from pathlib import Path
+
+print("Senity Link-Test")
+print("Web     : https://example.com")
+
+file_candidates = [
+    Path("/workspace/projects/autostart/INITIAL_PROMPT.md"),
+    Path("/workspace/INITIAL_PROMPT.md"),
+]
+folder_candidates = [
+    Path("/workspace/projects/senity-workspace"),
+    Path("/workspace/projects/autostart"),
+    Path("/workspace"),
+]
+
+file_path = next((p for p in file_candidates if p.exists()), Path("/workspace"))
+folder_path = next((p for p in folder_candidates if p.exists()), Path("/workspace"))
+
+print(f"Datei   : {file_path}")
+print(f"Ordner  : {folder_path}/")
+'@
+    docker run @dockerArgs senity-claude:latest senity-mascot-filter python3 -c $testScript
+    exit $LASTEXITCODE
+}
+
 Write-Host "  Starte Claude Code... (Ctrl+C zum Beenden)" -ForegroundColor Green
 Write-Host ""
 

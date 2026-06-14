@@ -13,3 +13,7 @@ workspace/
 __pycache__/
 *.pyc
 .DS_Store
+.claude.json
+
+# Privat-Profile (lokal only)
+users/*/profil-privat.md

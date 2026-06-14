@@ -22,10 +22,12 @@ Einziger Provider: **Senity Chat Proxy**.
 .\claude-senity.bat
 .\claude-senity.bat --yolo
 .\claude-senity.bat --create-shortcut   # Desktop-Verknuepfung einmalig anlegen
+.\claude-senity.bat --test-links        # Datei-/Ordner-/Weblink-Klicks testen
 
 # Linux / macOS
 ./claude-senity.sh
 ./claude-senity.sh --yolo
+./claude-senity.sh --test-links
 ```
 
 ## Was beim ersten Start passiert
@@ -175,6 +177,41 @@ ACCENT_256=199        # Pink-Glow
 
 - `patch-claude-header.js` patcht beim Image-Build alle Anthropic-Orange-Farbcodes im Claude-Code-Bundle auf die Senity-Palette und ersetzt Welcome-Box-Strings ("Welcome back!" -> "Willkommen bei Senity!" etc.).
 - `docker-entrypoint.sh` liest dieselbe Datei zur Laufzeit fuer das ASCII-Banner.
+- `senity-mascot-filter.py` setzt zusaetzlich klickbare OSC-8-Links fuer Web-URLs und vorhandene Dateipfade (`/workspace/...`, relative Pfade, `.bindings`-Mounts), damit Strg+Klick im Terminal die Host-Datei oeffnet. Mit `--test-links` gibt der Launcher je einen Web-, Datei- und Ordnerlink aus.
+
+### Klickbare Links / Warp
+
+Der Linkifier erkennt Weblinks, Dateien und Ordner und mappt Containerpfade ueber `SENITY_LINK_PATH_MAP` auf Hostpfade. Relative Pfade werden gegen das aktuelle Arbeitsverzeichnis, `/workspace` und direkte Projektordner unter `/workspace/projects/` aufgeloest. Vorhandene OSC-8-Links werden respektiert; weitere Pfade im selben Output-Chunk werden trotzdem verlinkt.
+
+Warp behandelt Claude Code als TUI/Fullscreen-App und reicht Mausereignisse standardmaessig an die App weiter. Deshalb setzt Senity `SENITY_STRIP_MOUSE_REPORTING=auto`: Bei Warp werden Mouse-Reporting-Enable-Sequenzen entfernt, damit `CTRL`+Klick auf Datei-/Ordner-/Weblinks funktioniert.
+
+Steuerung:
+
+```bash
+# Link-Test ohne Claude Code starten
+.\claude-senity.bat --test-links
+./claude-senity.sh --test-links
+
+# Mausereignisse explizit an Claude Code durchreichen
+.\claude-senity.bat --mouse-reporting
+./claude-senity.sh --mouse-reporting
+
+# Mausereignisse explizit fuer Terminal-Links reservieren
+.\claude-senity.bat --no-mouse-reporting
+./claude-senity.sh --no-mouse-reporting
+```
+
+Editor-Linkformat fuer Zeilen-/Spaltenlinks:
+
+```bash
+# Default: file:///...
+SENITY_FILE_LINK_FORMAT=file
+
+# Optional: Editor-URI, z.B. foo.ts:42:3 -> vscode://file/.../foo.ts:42:3
+SENITY_FILE_LINK_FORMAT=vscode
+```
+
+Unterstuetzte Werte: `file` (Default), `vscode`, `vscode-insiders`, `vscodium`, `cursor`, `windsurf`.
 
 Aenderungen an `senity-theme.conf` benoetigen einen Image-Rebuild:
 
@@ -190,7 +227,7 @@ Aenderungen an `senity-theme.conf` benoetigen einen Image-Rebuild:
 ./claude-senity.sh --rebuild
 ```
 
-Loescht `senity-claude:latest` und baut das Image neu. Noetig nach Aenderungen an `Dockerfile`, `senity-theme.conf`, `patch-claude-header.js` oder `docker-entrypoint.sh`.
+Loescht `senity-claude:latest` und baut das Image neu. Noetig nach Aenderungen an `Dockerfile`, `senity-theme.conf`, `patch-claude-header.js`, `senity-mascot-filter.py` oder `docker-entrypoint.sh`.
 
 ## Troubleshooting
 

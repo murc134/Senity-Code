@@ -1,14 +1,24 @@
 FROM node:22-bookworm-slim
 
-# System-Abhaengigkeiten + Build-Tools + Chromium/Puppeteer-Libs
+# System-Abhaengigkeiten + Build-Tools + Chromium/Puppeteer-Libs + PDF-Toolchain
+# poppler-utils liefert pdftotext/pdftoppm/pdfimages (vom pdf-Skill genutzt),
+# python3-pip wird fuer die PDF-Python-Libs gebraucht (#862).
 RUN apt-get update && apt-get install -y \
-    git openssh-client curl jq python3 \
+    git openssh-client curl jq python3 python3-pip \
+    poppler-utils \
     build-essential make g++ \
     libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
     libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libgbm1 \
     libpango-1.0-0 libcairo2 libasound2 \
     fonts-liberation fontconfig \
     && rm -rf /var/lib/apt/lists/*
+
+# Python-PDF-Libraries fuer den pdf-Skill (#862). --break-system-packages, weil
+# Debian bookworm PEP 668 (externally-managed-environment) erzwingt und ein
+# globaler Install im Image hier gewollt ist. pdf2image ruft intern pdftoppm
+# (poppler-utils) auf.
+RUN pip3 install --no-cache-dir --break-system-packages \
+    pypdf pdfplumber pdf2image Pillow
 
 # Claude Code CLI installieren
 RUN npm install -g @anthropic-ai/claude-code
