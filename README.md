@@ -183,7 +183,7 @@ ACCENT_256=199        # Pink-Glow
 
 Der Linkifier erkennt Weblinks, Dateien und Ordner und mappt Containerpfade ueber `SENITY_LINK_PATH_MAP` auf Hostpfade. Relative Pfade werden gegen das aktuelle Arbeitsverzeichnis, `/workspace` und direkte Projektordner unter `/workspace/projects/` aufgeloest. Vorhandene OSC-8-Links werden respektiert; weitere Pfade im selben Output-Chunk werden trotzdem verlinkt.
 
-Warp behandelt Claude Code als TUI/Fullscreen-App und reicht Mausereignisse standardmaessig an die App weiter. Deshalb setzt Senity `SENITY_STRIP_MOUSE_REPORTING=auto`: Bei Warp werden Mouse-Reporting-Enable-Sequenzen entfernt, damit `CTRL`+Klick auf Datei-/Ordner-/Weblinks funktioniert. Zusaetzlich setzt Senity `SENITY_VISIBLE_HOST_PATHS=auto`: Bei Warp werden Ordnerpfade wie `/workspace/...` als sichtbare Hostpfade wie `D:\...\workspace\...` ausgegeben; Dateien werden als sichtbare `file:///...`-Links ausgegeben, weil Warp dieses URL-Protokoll nativ oeffnet.
+Warp behandelt Claude Code als TUI/Fullscreen-App und reicht Mausereignisse standardmaessig an die App weiter. Deshalb setzt Senity `SENITY_STRIP_MOUSE_REPORTING=auto`: Bei Warp werden Mouse-Reporting- und Scrollrad-Arrow-Enable-Sequenzen entfernt, damit Scrollen und `CTRL`+Klick besser funktionieren. Zusaetzlich setzt Senity `SENITY_VISIBLE_HOST_PATHS=auto`: Bei Warp werden Pfade nur dort sichtbar umgeschrieben, wo die Zeile nicht wie eine Tabelle/Box aussieht. Ordnerpfade werden als Hostpfade wie `D:\...\workspace\...` ausgegeben; Dateien als sichtbare `file:///...`-Links, weil Warp dieses URL-Protokoll nativ oeffnet.
 
 Steuerung:
 
@@ -216,13 +216,13 @@ Unterstuetzte Werte: `file` (Default), `vscode`, `vscode-insiders`, `vscodium`, 
 Fallback fuer sichtbare Host-Pfade:
 
 ```bash
-# Default: auto (bei Warp aktiv)
+# Default: auto (bei Warp layoutschonend aktiv)
 SENITY_VISIBLE_HOST_PATHS=auto
 
 # Containerpfade sichtbar lassen und nur OSC-8 nutzen
 SENITY_VISIBLE_HOST_PATHS=0
 
-# Hostpfade immer sichtbar machen
+# Hostpfade immer sichtbar machen (kann Tabellen/Boxen optisch zerlegen)
 SENITY_VISIBLE_HOST_PATHS=1
 ```
 

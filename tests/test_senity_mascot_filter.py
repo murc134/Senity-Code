@@ -115,6 +115,16 @@ class SenityMascotFilterTests(unittest.TestCase):
 
         self._with_filter(self._env(SENITY_HOST_TERM_PROGRAM="WarpTerminal"), run)
 
+    def test_warp_table_rows_preserve_visible_layout(self):
+        def run(mod):
+            line = "│ /workspace/projects/autostart/INITIAL_PROMPT.md │ Inhalt │".encode()
+            out = mod.linkify_chunk(line)
+            visible = mod.TERMINAL_ESCAPE_RE.sub(b"", out)
+            self.assertEqual(visible, line)
+            self._assert_link(out, "file:///D:/Host/workspace/projects/autostart/INITIAL_PROMPT.md")
+
+        self._with_filter(self._env(SENITY_HOST_TERM_PROGRAM="WarpTerminal"), run)
+
     def test_warp_relative_path_uses_recent_directory_context(self):
         def run(mod):
             Path("/workspace/.mcp").mkdir(parents=True, exist_ok=True)
@@ -152,6 +162,14 @@ class SenityMascotFilterTests(unittest.TestCase):
             self.assertNotIn(b"\x1b[?1006h", out)
             self.assertIn(b"file:///D:/Host/workspace/projects/autostart/INITIAL_PROMPT.md", out)
             self.assertNotIn(b"\x1b]8;id=senity-", out)
+
+        self._with_filter(self._env(SENITY_HOST_TERM_PROGRAM="WarpTerminal"), run)
+
+    def test_warp_scroll_wheel_arrow_mode_is_removed(self):
+        def run(mod):
+            out = mod.linkify_chunk(b"\x1b[?1007h\x1b[?1049h")
+            self.assertNotIn(b"\x1b[?1007h", out)
+            self.assertIn(b"\x1b[?1049h", out)
 
         self._with_filter(self._env(SENITY_HOST_TERM_PROGRAM="WarpTerminal"), run)
 

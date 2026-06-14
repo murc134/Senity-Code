@@ -103,7 +103,7 @@ TERMINAL_ESCAPE_RE = re.compile(
 )
 ANSI_SGR_RE = re.compile(rb"\x1b\[[0-?]*[ -/]*m")
 CSI_PRIVATE_MODE_RE = re.compile(rb"^\x1b\[\?([0-9;]*)([hl])$")
-MOUSE_MODE_PARAMS = {b"9", b"1000", b"1002", b"1003", b"1005", b"1006", b"1015", b"1016"}
+MOUSE_MODE_PARAMS = {b"9", b"1000", b"1002", b"1003", b"1005", b"1006", b"1007", b"1015", b"1016"}
 LINK_TOKEN = rb"[^\s<>()\[\]{}\"'`:|\x1b]+"
 URL_OR_PATH_RE = re.compile(
     rb"(?P<url>(?:https?|ftp)://[^\s<>()\[\]{}\"'`\x1b]+)"
@@ -137,17 +137,20 @@ def _strip_mouse_reporting_enabled() -> bool:
 STRIP_MOUSE_REPORTING = _strip_mouse_reporting_enabled()
 
 
-def _visible_host_paths_enabled() -> bool:
+def _visible_host_paths_mode() -> str:
     value = os.environ.get("SENITY_VISIBLE_HOST_PATHS", "auto").lower()
     if value in ("1", "true", "yes", "on"):
-        return True
+        return "all"
     if value in ("0", "false", "no", "off"):
-        return False
+        return "off"
+    if value in ("safe", "layout", "conservative"):
+        return "safe"
     host_term = os.environ.get("SENITY_HOST_TERM_PROGRAM") or os.environ.get("TERM_PROGRAM", "")
-    return "warp" in host_term.lower()
+    return "safe" if "warp" in host_term.lower() else "off"
 
 
-VISIBLE_HOST_PATHS = _visible_host_paths_enabled()
+VISIBLE_HOST_PATHS_MODE = _visible_host_paths_mode()
+VISIBLE_HOST_PATHS = VISIBLE_HOST_PATHS_MODE != "off"
 
 
 def _is_windows_abs(path_text: str) -> bool:
@@ -351,6 +354,33 @@ def _visible_path_label(host_path: str, original_path: str, line: str | None, co
     return _visible_host_label(host_path, original_path, line, col)
 
 
+def _line_for_match(visible: bytes, start: int, end: int) -> bytes:
+    line_start = visible.rfind(b"\n", 0, start) + 1
+    line_end = visible.find(b"\n", end)
+    if line_end == -1:
+        line_end = len(visible)
+    return visible[line_start:line_end]
+
+
+def _line_looks_like_table(line: bytes) -> bool:
+    text = line.decode("utf-8", "ignore")
+    if any(ch in text for ch in "┌┬┐└┴┘┼╞╪╡╤╧╒╓╔╗╚╝╠╣╦╩╬"):
+        return True
+    if text.count("|") >= 2:
+        return True
+    if text.count("│") >= 2 and "├" not in text and "└" not in text:
+        return True
+    return False
+
+
+def _allow_visible_path_override(visible: bytes, start: int, end: int) -> bool:
+    if VISIBLE_HOST_PATHS_MODE == "all":
+        return True
+    if VISIBLE_HOST_PATHS_MODE != "safe":
+        return False
+    return not _line_looks_like_table(_line_for_match(visible, start, end))
+
+
 def _split_location(path_text: str):
     m = LOCATION_RE.match(path_text)
     if not m:
@@ -377,7 +407,7 @@ def _resolve_container_path(path_text: str):
     return None
 
 
-def _path_target_for(raw: bytes):
+def _path_target_for(raw: bytes, visible_override: bool = True):
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
@@ -389,8 +419,9 @@ def _path_target_for(raw: bytes):
         kind = _container_path_kind(container_path) if container_path else "unknown"
         if container_path:
             _remember_container_path(container_path, kind)
-        label = _visible_path_label(path_text, path_text, _line, _col, kind, uri) if VISIBLE_HOST_PATHS else None
-        return uri, label, not VISIBLE_HOST_PATHS
+        use_visible = VISIBLE_HOST_PATHS and visible_override
+        label = _visible_path_label(path_text, path_text, _line, _col, kind, uri) if use_visible else None
+        return uri, label, not use_visible
     container_path = _resolve_container_path(path_text)
     if not container_path:
         return None
@@ -398,8 +429,9 @@ def _path_target_for(raw: bytes):
     _remember_container_path(container_path, kind)
     host_path = _container_to_host_path(container_path)
     uri = _editor_uri(host_path, _line, _col)
-    label = _visible_path_label(host_path, path_text, _line, _col, kind, uri) if VISIBLE_HOST_PATHS else None
-    return uri, label, not VISIBLE_HOST_PATHS
+    use_visible = VISIBLE_HOST_PATHS and visible_override
+    label = _visible_path_label(host_path, path_text, _line, _col, kind, uri) if use_visible else None
+    return uri, label, not use_visible
 
 
 def _trim_trailing(raw: bytes):
@@ -466,7 +498,8 @@ def _linkify_visible_bytes(raw_run: bytes, visible: bytes, visible_to_raw: list[
             except UnicodeDecodeError:
                 out.extend(raw_run[raw_start:raw_end])
         else:
-            target = _path_target_for(core)
+            visible_override = _allow_visible_path_override(visible, m.start(), m.start() + len(core))
+            target = _path_target_for(core, visible_override)
             if target:
                 uri, label_override, wrap = target
                 core_raw_end = visible_to_raw[m.start() + len(core) - 1] + 1
