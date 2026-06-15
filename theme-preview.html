@@ -98,6 +98,18 @@
     border-color: #c0392b;
     color: #e74c3c;
   }
+  .color-row.inherited .token-name { color: #7d8aa0; font-style: italic; }
+  .color-row .inherited-badge {
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #6a9bcc;
+    border: 1px solid #3a4a5c;
+    border-radius: 3px;
+    padding: 1px 4px;
+    margin-left: 2px;
+    flex: none;
+  }
 
   .theme-selector {
     display: flex;
@@ -316,7 +328,7 @@
   <h2 class="ebene">Ebene 1 &mdash; Banner-Akzente (senity-theme.conf)</h2>
   <div id="accent-controls"></div>
 
-  <h2 class="ebene">Ebene 2 &mdash; Senity-Theme &middot; 49 Token</h2>
+  <h2 class="ebene">Ebene 2 &mdash; Senity-Theme &middot; 49 ueberschrieben + 21 geerbt (base: dark)</h2>
   <div id="color-controls"></div>
 
   <div class="export-btns">
@@ -420,6 +432,28 @@ const SENITY_CLASSIC = {
   rainbow_blue: "rgb(130,170,220)",
   rainbow_indigo: "rgb(155,130,200)",
   rainbow_violet: "rgb(200,130,180)",
+  // -- Geerbt von base: dark (nicht in senity-theme.json ueberschrieben) --
+  red_FOR_SUBAGENTS_ONLY: "rgb(220,38,38)",
+  blue_FOR_SUBAGENTS_ONLY: "rgb(106,155,204)",
+  green_FOR_SUBAGENTS_ONLY: "rgb(22,163,74)",
+  yellow_FOR_SUBAGENTS_ONLY: "rgb(202,138,4)",
+  purple_FOR_SUBAGENTS_ONLY: "rgb(130,125,189)",
+  orange_FOR_SUBAGENTS_ONLY: "rgb(217,119,87)",
+  pink_FOR_SUBAGENTS_ONLY: "rgb(196,102,134)",
+  cyan_FOR_SUBAGENTS_ONLY: "rgb(8,145,178)",
+  clawd_background: "rgb(0,0,0)",
+  userMessageBackground: "rgb(55,55,55)",
+  userMessageBackgroundHover: "rgb(70,70,70)",
+  selectionBg: "rgb(38,79,120)",
+  bashMessageBackgroundColor: "rgb(65,60,65)",
+  memoryBackgroundColor: "rgb(55,65,70)",
+  rainbow_red_shimmer: "rgb(250,155,147)",
+  rainbow_orange_shimmer: "rgb(255,185,137)",
+  rainbow_yellow_shimmer: "rgb(255,225,155)",
+  rainbow_green_shimmer: "rgb(185,230,180)",
+  rainbow_blue_shimmer: "rgb(180,205,240)",
+  rainbow_indigo_shimmer: "rgb(195,180,230)",
+  rainbow_violet_shimmer: "rgb(230,180,210)",
 };
 
 // senity-fresh: harmonisierte Variante in der Lila/Pink-Palette der
@@ -476,6 +510,28 @@ const SENITY_FRESH = {
   rainbow_blue: "rgb(130,170,220)",
   rainbow_indigo: "rgb(155,130,200)",
   rainbow_violet: "rgb(200,130,180)",
+  // -- Geerbt von base: dark (nicht in senity-theme.json ueberschrieben) --
+  red_FOR_SUBAGENTS_ONLY: "rgb(220,38,38)",
+  blue_FOR_SUBAGENTS_ONLY: "rgb(106,155,204)",
+  green_FOR_SUBAGENTS_ONLY: "rgb(22,163,74)",
+  yellow_FOR_SUBAGENTS_ONLY: "rgb(202,138,4)",
+  purple_FOR_SUBAGENTS_ONLY: "rgb(130,125,189)",
+  orange_FOR_SUBAGENTS_ONLY: "rgb(217,119,87)",
+  pink_FOR_SUBAGENTS_ONLY: "rgb(196,102,134)",
+  cyan_FOR_SUBAGENTS_ONLY: "rgb(8,145,178)",
+  clawd_background: "rgb(0,0,0)",
+  userMessageBackground: "rgb(55,55,55)",
+  userMessageBackgroundHover: "rgb(70,70,70)",
+  selectionBg: "rgb(38,79,120)",
+  bashMessageBackgroundColor: "rgb(65,60,65)",
+  memoryBackgroundColor: "rgb(55,65,70)",
+  rainbow_red_shimmer: "rgb(250,155,147)",
+  rainbow_orange_shimmer: "rgb(255,185,137)",
+  rainbow_yellow_shimmer: "rgb(255,225,155)",
+  rainbow_green_shimmer: "rgb(185,230,180)",
+  rainbow_blue_shimmer: "rgb(180,205,240)",
+  rainbow_indigo_shimmer: "rgb(195,180,230)",
+  rainbow_violet_shimmer: "rgb(230,180,210)",
 };
 
 // Stock Dark-Theme aus dem Claude-Code-Bundle (Vergleich/Reset).
@@ -507,6 +563,28 @@ const DARK = {
   rainbow_yellow: "rgb(250,195,95)", rainbow_green: "rgb(145,200,130)",
   rainbow_blue: "rgb(130,170,220)", rainbow_indigo: "rgb(155,130,200)",
   rainbow_violet: "rgb(200,130,180)",
+  // -- Vollstaendiges Dark-Theme: weitere Tokens aus dem Bundle --
+  red_FOR_SUBAGENTS_ONLY: "rgb(220,38,38)",
+  blue_FOR_SUBAGENTS_ONLY: "rgb(106,155,204)",
+  green_FOR_SUBAGENTS_ONLY: "rgb(22,163,74)",
+  yellow_FOR_SUBAGENTS_ONLY: "rgb(202,138,4)",
+  purple_FOR_SUBAGENTS_ONLY: "rgb(130,125,189)",
+  orange_FOR_SUBAGENTS_ONLY: "rgb(217,119,87)",
+  pink_FOR_SUBAGENTS_ONLY: "rgb(196,102,134)",
+  cyan_FOR_SUBAGENTS_ONLY: "rgb(8,145,178)",
+  clawd_background: "rgb(0,0,0)",
+  userMessageBackground: "rgb(55,55,55)",
+  userMessageBackgroundHover: "rgb(70,70,70)",
+  selectionBg: "rgb(38,79,120)",
+  bashMessageBackgroundColor: "rgb(65,60,65)",
+  memoryBackgroundColor: "rgb(55,65,70)",
+  rainbow_red_shimmer: "rgb(250,155,147)",
+  rainbow_orange_shimmer: "rgb(255,185,137)",
+  rainbow_yellow_shimmer: "rgb(255,225,155)",
+  rainbow_green_shimmer: "rgb(185,230,180)",
+  rainbow_blue_shimmer: "rgb(180,205,240)",
+  rainbow_indigo_shimmer: "rgb(195,180,230)",
+  rainbow_violet_shimmer: "rgb(230,180,210)",
 };
 
 const LIGHT = {
@@ -537,6 +615,28 @@ const LIGHT = {
   rainbow_yellow: "rgb(250,195,95)", rainbow_green: "rgb(145,200,130)",
   rainbow_blue: "rgb(130,170,220)", rainbow_indigo: "rgb(155,130,200)",
   rainbow_violet: "rgb(200,130,180)",
+  // -- Vollstaendiges Light-Theme: weitere Tokens aus dem Bundle --
+  red_FOR_SUBAGENTS_ONLY: "rgb(204,0,0)",
+  blue_FOR_SUBAGENTS_ONLY: "rgb(0,102,204)",
+  green_FOR_SUBAGENTS_ONLY: "rgb(0,204,0)",
+  yellow_FOR_SUBAGENTS_ONLY: "rgb(255,204,0)",
+  purple_FOR_SUBAGENTS_ONLY: "rgb(128,0,128)",
+  orange_FOR_SUBAGENTS_ONLY: "rgb(255,128,0)",
+  pink_FOR_SUBAGENTS_ONLY: "rgb(255,102,178)",
+  cyan_FOR_SUBAGENTS_ONLY: "rgb(0,178,178)",
+  clawd_background: "rgb(0,0,0)",
+  userMessageBackground: "rgb(240,240,240)",
+  userMessageBackgroundHover: "rgb(252,252,252)",
+  selectionBg: "rgb(180,213,255)",
+  bashMessageBackgroundColor: "rgb(250,245,250)",
+  memoryBackgroundColor: "rgb(230,245,250)",
+  rainbow_red_shimmer: "rgb(250,155,147)",
+  rainbow_orange_shimmer: "rgb(255,185,137)",
+  rainbow_yellow_shimmer: "rgb(255,225,155)",
+  rainbow_green_shimmer: "rgb(185,230,180)",
+  rainbow_blue_shimmer: "rgb(180,205,240)",
+  rainbow_indigo_shimmer: "rgb(195,180,230)",
+  rainbow_violet_shimmer: "rgb(230,180,210)",
 };
 
 const THEMES = {
@@ -546,8 +646,23 @@ const THEMES = {
   light: LIGHT,
 };
 
-// Token-Reihenfolge fuer den senity-theme.json-Export (overrides-Reihenfolge).
-const TOKEN_ORDER = Object.keys(SENITY_CLASSIC);
+// Tokens, die senity-theme.json NICHT ueberschreibt: sie erscheinen real im
+// Container, werden aber von base: dark geerbt. Nur zur Anzeige (Sidebar +
+// Preview), niemals in den senity-theme.json-Export aufnehmen.
+const INHERITED_TOKENS = new Set([
+  "red_FOR_SUBAGENTS_ONLY", "blue_FOR_SUBAGENTS_ONLY", "green_FOR_SUBAGENTS_ONLY",
+  "yellow_FOR_SUBAGENTS_ONLY", "purple_FOR_SUBAGENTS_ONLY", "orange_FOR_SUBAGENTS_ONLY",
+  "pink_FOR_SUBAGENTS_ONLY", "cyan_FOR_SUBAGENTS_ONLY",
+  "clawd_background", "userMessageBackground", "userMessageBackgroundHover",
+  "selectionBg", "bashMessageBackgroundColor", "memoryBackgroundColor",
+  "rainbow_red_shimmer", "rainbow_orange_shimmer", "rainbow_yellow_shimmer",
+  "rainbow_green_shimmer", "rainbow_blue_shimmer", "rainbow_indigo_shimmer",
+  "rainbow_violet_shimmer",
+]);
+
+// Token-Reihenfolge fuer den senity-theme.json-Export (nur bewusst
+// ueberschriebene Tokens, geerbte werden ausgefiltert).
+const TOKEN_ORDER = Object.keys(SENITY_CLASSIC).filter(t => !INHERITED_TOKENS.has(t));
 
 // Ebene 1: Banner-Akzente aus senity-theme.conf.
 const ACCENTS_DEFAULT = {
@@ -573,9 +688,23 @@ const TOKEN_GROUPS = {
   ],
   "Modi": ["planMode", "fastMode", "fastModeShimmer", "ide", "background"],
   "Rate Limit & Misc": ["rate_limit_fill", "rate_limit_empty", "professionalBlue", "chromeYellow"],
-  "Rainbow (Subagents)": [
+  "Rainbow (Spinner/ASCII)": [
     "rainbow_red", "rainbow_orange", "rainbow_yellow",
     "rainbow_green", "rainbow_blue", "rainbow_indigo", "rainbow_violet",
+  ],
+  "Rainbow-Shimmer (geerbt, base: dark)": [
+    "rainbow_red_shimmer", "rainbow_orange_shimmer", "rainbow_yellow_shimmer",
+    "rainbow_green_shimmer", "rainbow_blue_shimmer", "rainbow_indigo_shimmer",
+    "rainbow_violet_shimmer",
+  ],
+  "Subagent-Farben (geerbt, base: dark)": [
+    "red_FOR_SUBAGENTS_ONLY", "blue_FOR_SUBAGENTS_ONLY", "green_FOR_SUBAGENTS_ONLY",
+    "yellow_FOR_SUBAGENTS_ONLY", "purple_FOR_SUBAGENTS_ONLY", "orange_FOR_SUBAGENTS_ONLY",
+    "pink_FOR_SUBAGENTS_ONLY", "cyan_FOR_SUBAGENTS_ONLY",
+  ],
+  "Hintergruende (geerbt, base: dark)": [
+    "clawd_background", "userMessageBackground", "userMessageBackgroundHover",
+    "selectionBg", "bashMessageBackgroundColor", "memoryBackgroundColor",
   ],
 };
 
@@ -684,10 +813,19 @@ function renderSidebar() {
     container.appendChild(h2);
     for (const token of tokens) {
       const hex = rgbToHex(currentTheme[token] || "rgb(128,128,128)");
-      container.appendChild(makeColorRow(token, hex, (newHex) => {
+      const row = makeColorRow(token, hex, (newHex) => {
         currentTheme[token] = hexToRgb(newHex);
         renderPreview();
-      }));
+      });
+      if (INHERITED_TOKENS.has(token)) {
+        row.classList.add("inherited");
+        const badge = document.createElement("span");
+        badge.className = "inherited-badge";
+        badge.textContent = "geerbt";
+        badge.title = "Wird von base: dark geerbt, nicht in senity-theme.json ueberschrieben.";
+        row.appendChild(badge);
+      }
+      container.appendChild(row);
     }
   }
 }
@@ -842,17 +980,51 @@ function renderPreview() {
     </div>
   </div>
 
-  <!-- Rainbow -->
-  <div class="section-title">Rainbow / Subagent-Farben</div>
+  <!-- Subagent-Farben (echt: *_FOR_SUBAGENTS_ONLY, geerbt von base: dark) -->
+  <div class="section-title">Subagent-Farben (geerbt, base: dark)</div>
   <div class="terminal">
     <div class="terminal-body" style="background:${bg}">
-      <div class="term-line" style="color:${c('rainbow_red')}">  &#9632; Red Agent    <span style="color:${c('inactive')}"> — Security Audit</span></div>
-      <div class="term-line" style="color:${c('rainbow_orange')}">  &#9632; Orange Agent <span style="color:${c('inactive')}"> — Performance Review</span></div>
-      <div class="term-line" style="color:${c('rainbow_yellow')}">  &#9632; Yellow Agent <span style="color:${c('inactive')}"> — Documentation</span></div>
-      <div class="term-line" style="color:${c('rainbow_green')}">  &#9632; Green Agent  <span style="color:${c('inactive')}"> — Testing</span></div>
-      <div class="term-line" style="color:${c('rainbow_blue')}">  &#9632; Blue Agent   <span style="color:${c('inactive')}"> — Architecture</span></div>
-      <div class="term-line" style="color:${c('rainbow_indigo')}">  &#9632; Indigo Agent <span style="color:${c('inactive')}"> — Database</span></div>
-      <div class="term-line" style="color:${c('rainbow_violet')}">  &#9632; Violet Agent <span style="color:${c('inactive')}"> — Frontend</span></div>
+      <div class="term-line" style="color:${c('red_FOR_SUBAGENTS_ONLY')}">  &#9632; Red Agent    <span style="color:${c('inactive')}"> &middot; Security Audit</span></div>
+      <div class="term-line" style="color:${c('blue_FOR_SUBAGENTS_ONLY')}">  &#9632; Blue Agent   <span style="color:${c('inactive')}"> &middot; Architecture</span></div>
+      <div class="term-line" style="color:${c('green_FOR_SUBAGENTS_ONLY')}">  &#9632; Green Agent  <span style="color:${c('inactive')}"> &middot; Testing</span></div>
+      <div class="term-line" style="color:${c('yellow_FOR_SUBAGENTS_ONLY')}">  &#9632; Yellow Agent <span style="color:${c('inactive')}"> &middot; Documentation</span></div>
+      <div class="term-line" style="color:${c('purple_FOR_SUBAGENTS_ONLY')}">  &#9632; Purple Agent <span style="color:${c('inactive')}"> &middot; Refactoring</span></div>
+      <div class="term-line" style="color:${c('orange_FOR_SUBAGENTS_ONLY')}">  &#9632; Orange Agent <span style="color:${c('inactive')}"> &middot; Performance Review</span></div>
+      <div class="term-line" style="color:${c('pink_FOR_SUBAGENTS_ONLY')}">  &#9632; Pink Agent   <span style="color:${c('inactive')}"> &middot; Frontend</span></div>
+      <div class="term-line" style="color:${c('cyan_FOR_SUBAGENTS_ONLY')}">  &#9632; Cyan Agent   <span style="color:${c('inactive')}"> &middot; Database</span></div>
+    </div>
+  </div>
+
+  <!-- Rainbow (Spinner / ASCII-Banner-Animation) -->
+  <div class="section-title">Rainbow (Spinner / ASCII-Animation)</div>
+  <div class="terminal">
+    <div class="terminal-body" style="background:${bg}">
+      <div class="term-line">
+        <span style="color:${c('rainbow_red')}">&#9608;</span><span style="color:${c('rainbow_orange')}">&#9608;</span><span style="color:${c('rainbow_yellow')}">&#9608;</span><span style="color:${c('rainbow_green')}">&#9608;</span><span style="color:${c('rainbow_blue')}">&#9608;</span><span style="color:${c('rainbow_indigo')}">&#9608;</span><span style="color:${c('rainbow_violet')}">&#9608;</span>
+        <span style="color:${c('inactive')}"> Volltonfarben</span>
+      </div>
+      <div class="term-line">
+        <span style="color:${c('rainbow_red_shimmer')}">&#9608;</span><span style="color:${c('rainbow_orange_shimmer')}">&#9608;</span><span style="color:${c('rainbow_yellow_shimmer')}">&#9608;</span><span style="color:${c('rainbow_green_shimmer')}">&#9608;</span><span style="color:${c('rainbow_blue_shimmer')}">&#9608;</span><span style="color:${c('rainbow_indigo_shimmer')}">&#9608;</span><span style="color:${c('rainbow_violet_shimmer')}">&#9608;</span>
+        <span style="color:${c('inactive')}"> Shimmer (geerbt, base: dark)</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Nachrichten-Hintergruende (geerbt von base: dark) -->
+  <div class="section-title">Nachrichten-Hintergruende (geerbt, base: dark)</div>
+  <div class="terminal">
+    <div class="terminal-body" style="background:${c('clawd_background')}">
+      <div class="term-line" style="color:${c('text')};background:${c('userMessageBackground')};padding:2px 6px;border-radius:3px;display:inline-block;">  you: Erstelle eine Funktion  (userMessageBackground)</div>
+      <div class="term-line"></div>
+      <div class="term-line" style="color:${c('text')};background:${c('userMessageBackgroundHover')};padding:2px 6px;border-radius:3px;display:inline-block;">  you: gehoverte Nachricht  (userMessageBackgroundHover)</div>
+      <div class="term-line"></div>
+      <div class="term-line" style="color:${c('text')};background:${c('selectionBg')};padding:2px 6px;border-radius:3px;display:inline-block;">  markierter Text  (selectionBg)</div>
+      <div class="term-line"></div>
+      <div class="term-line" style="color:${c('text')};background:${c('bashMessageBackgroundColor')};padding:2px 6px;border-radius:3px;display:inline-block;">  $ npm run build  (bashMessageBackgroundColor)</div>
+      <div class="term-line"></div>
+      <div class="term-line" style="color:${c('text')};background:${c('memoryBackgroundColor')};padding:2px 6px;border-radius:3px;display:inline-block;">  &#9670; Memory: project conventions  (memoryBackgroundColor)</div>
+      <div class="term-line"></div>
+      <div class="term-line" style="color:${c('inactive')};font-size:10px;">  Hintergrund dieser Box = clawd_background</div>
     </div>
   </div>
 
@@ -966,12 +1138,13 @@ function generateExport(tab) {
       for (const k of ["PRIMARY", "SECONDARY", "ACCENT"]) {
         lines.push(`  ${k.padEnd(12)} ${currentAccents[k].hex.toUpperCase()}`);
       }
-      lines.push("", "-- Ebene 2: Senity-Theme (49 Token) --");
+      lines.push("", "-- Ebene 2: Senity-Theme (49 ueberschrieben + 21 geerbt, base: dark) --");
       for (const [group, tokens] of Object.entries(TOKEN_GROUPS)) {
         lines.push(`-- ${group} --`);
         for (const t of tokens) {
-          const v = currentTheme[t] || "—";
-          lines.push(`  ${t.padEnd(38)} ${rgbToHex(v)}  ${v}`);
+          const v = currentTheme[t] || "n/a";
+          const mark = INHERITED_TOKENS.has(t) ? "  [geerbt]" : "";
+          lines.push(`  ${t.padEnd(38)} ${rgbToHex(v)}  ${v}${mark}`);
         }
         lines.push("");
       }
