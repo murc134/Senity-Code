@@ -27,6 +27,28 @@ SENITY_MCP_CONFIG="${SENITY_HOME}/mcp-config.json"
 SENITY_CACHE_DIR="${SENITY_HOME}/cache"
 SENITY_WORKSPACE_DIR="${SENITY_HOME}/workspace"
 
+# ---- Lib-Loader (Dev-Mode + Installed-Layout) -------------------------------
+SENITY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SENITY_LIB_DIR=""
+for _cand in \
+    "${SENITY_SCRIPT_DIR}/lib" \
+    "${SENITY_SCRIPT_DIR}/../share/senity/lib" \
+    "${HOME}/.local/share/senity/lib" \
+    "/usr/local/share/senity/lib"; do
+    if [[ -f "${_cand}/gitea-device-flow.sh" ]]; then
+        SENITY_LIB_DIR="$_cand"
+        break
+    fi
+done
+unset _cand
+if [[ -n "$SENITY_LIB_DIR" ]]; then
+    # shellcheck disable=SC1091
+    source "${SENITY_LIB_DIR}/gitea-device-flow.sh"
+    SENITY_GITEA_AVAILABLE=1
+else
+    SENITY_GITEA_AVAILABLE=0
+fi
+
 DEFAULT_IMAGE="git.senity.ai/senity-admin/senity-code:latest"
 FALLBACK_IMAGE="senity-claude:latest"
 DEFAULT_PROXY_URL="https://sdr.senity.ai/api/claude-proxy"
@@ -50,6 +72,10 @@ SUBCOMMAND=""
 COMFYUI_PORT=8188
 COMFYUI_GPU=0
 CLAUDE_ARGS=()
+GITEA_FLAG_HEADLESS=0
+GITEA_FLAG_ENSURE_FRESH=0
+GITEA_FLAG_WRITE_DOCKER=0
+GITEA_FLAG_PRINT=0
 
 print_help() {
     cat <<'EOF'
@@ -72,8 +98,19 @@ OPTIONS
   --help, -h            Diese Hilfe
 
 SUBCOMMANDS
-  login                 Senity-Proxy-Key in ~/.senity/.env hinterlegen
-  comfyui               ComfyUI statt Claude Code starten
+  login                       Senity-Proxy-Key in ~/.senity/.env hinterlegen
+  comfyui                     ComfyUI statt Claude Code starten
+  gitea-login [--headless]    OAuth2 Device-Flow gegen git.senity.ai
+  gitea-token [flags]         Frischen Access-Token bereitstellen
+                                --ensure-fresh        Refresh wenn abgelaufen
+                                --write-docker-config ~/.docker/config.json patchen
+                                --print               Token auf stdout (NUR fuer CI)
+  gitea-status                Login-Status anzeigen (Tokens werden NICHT geloggt)
+  gitea-logout                Refresh-Token revoken + auth.json loeschen
+
+EXIT-CODES (gitea-*)
+  0  ok        2  auth fehlt   3  refresh invalid_grant
+  4  expired   5  access_denied 6  Netzwerk / Setup-Fehler
 
 EOF
 }
@@ -90,6 +127,14 @@ while [[ $# -gt 0 ]]; do
         --help|-h)     print_help; exit 0 ;;
         login)         SUBCOMMAND="login"; shift ;;
         comfyui)       SUBCOMMAND="comfyui"; shift ;;
+        gitea-login)   SUBCOMMAND="gitea-login"; shift ;;
+        gitea-token)   SUBCOMMAND="gitea-token"; shift ;;
+        gitea-status)  SUBCOMMAND="gitea-status"; shift ;;
+        gitea-logout)  SUBCOMMAND="gitea-logout"; shift ;;
+        --headless)            GITEA_FLAG_HEADLESS=1; shift ;;
+        --ensure-fresh)        GITEA_FLAG_ENSURE_FRESH=1; shift ;;
+        --write-docker-config) GITEA_FLAG_WRITE_DOCKER=1; shift ;;
+        --print)               GITEA_FLAG_PRINT=1; shift ;;
         --)            shift; CLAUDE_ARGS=("$@"); break ;;
         *)             CLAUDE_ARGS+=("$1"); shift ;;
     esac
@@ -151,6 +196,184 @@ SENITY_CHAT_PROXY_URL=$url
 SENITY_CHAT_PROXY_KEY=$key
 EOF
     log "Konfiguration geschrieben nach $SENITY_ENV_FILE (chmod 600)"
+}
+
+# ---- Gitea Device-Flow (#1059) ----------------------------------------------
+require_gitea_lib() {
+    if [[ "$SENITY_GITEA_AVAILABLE" -ne 1 ]]; then
+        err "lib/gitea-device-flow.sh nicht gefunden. Re-Install via install.sh notwendig."
+        exit 6
+    fi
+    gitea_require_deps || exit 6
+}
+
+cmd_gitea_login() {
+    require_gitea_lib
+    ensure_dirs
+
+    # Headless-Path: Refresh-Token aus Env, kein Device-Flow noetig
+    if [[ "$GITEA_FLAG_HEADLESS" -eq 1 ]]; then
+        local rt="${SENITY_GITEA_RT:-}"
+        if [[ -z "$rt" ]]; then
+            err "SENITY_GITEA_RT muss im Headless-Mode gesetzt sein"
+            exit 6
+        fi
+        local refreshed
+        if ! refreshed=$(gitea_refresh "$rt"); then
+            local rc=$?
+            err "Headless-Login fehlgeschlagen (Exit ${rc})"
+            exit "$rc"
+        fi
+        gitea_persist_auth "$refreshed" || exit 6
+        gitea_log "Headless-Login ok"
+        exit 0
+    fi
+
+    local init_json
+    if ! init_json=$(gitea_device_init); then
+        exit 6
+    fi
+
+    local user_code device_code uri uri_complete interval
+    user_code=$(printf '%s' "$init_json"   | gitea_json_get user_code)
+    device_code=$(printf '%s' "$init_json" | gitea_json_get device_code)
+    uri=$(printf '%s' "$init_json"         | gitea_json_get verification_uri)
+    uri_complete=$(printf '%s' "$init_json" | gitea_json_get verification_uri_complete)
+    interval=$(printf '%s' "$init_json"    | gitea_json_get interval)
+    [[ -z "$interval" || ! "$interval" =~ ^[0-9]+$ ]] && interval=5
+
+    if [[ -z "$device_code" || -z "$user_code" || -z "$uri" ]]; then
+        err "Device-Init lieferte unvollstaendige Response"
+        exit 6
+    fi
+
+    gitea_show_user_code "$user_code" "$uri" "$uri_complete"
+    gitea_log "Warte auf Bestaetigung (max ${GITEA_POLL_HARD_CAP}s) ..."
+
+    local token_json rc
+    if ! token_json=$(gitea_poll_token "$device_code" "$interval"); then
+        rc=$?
+        exit "$rc"
+    fi
+    gitea_persist_auth "$token_json" || exit 6
+    gitea_log "Login erfolgreich, Tokens in ${GITEA_AUTH_FILE} gespeichert (0600)"
+    exit 0
+}
+
+# Echo "<access_token>" auf stdout, oder exit 2/3/6
+_gitea_get_fresh_access_token() {
+    local auth_json freshness
+    freshness=$(gitea_token_freshness)
+    case "$freshness" in
+        missing) return 2 ;;
+        fresh)
+            auth_json=$(gitea_read_auth) || return 2
+            printf '%s' "$auth_json" | gitea_json_get access_token
+            return 0
+            ;;
+        stale)
+            auth_json=$(gitea_read_auth) || return 2
+            local rt
+            rt=$(printf '%s' "$auth_json" | gitea_json_get refresh_token)
+            if [[ -z "$rt" ]]; then return 2; fi
+            local refreshed
+            if ! refreshed=$(gitea_refresh "$rt"); then
+                return $?
+            fi
+            gitea_persist_auth "$refreshed" || return 6
+            printf '%s' "$refreshed" | gitea_json_get access_token
+            return 0
+            ;;
+    esac
+    return 6
+}
+
+cmd_gitea_token() {
+    require_gitea_lib
+
+    # Default-Verhalten = --ensure-fresh
+    if [[ "$GITEA_FLAG_ENSURE_FRESH" -eq 0 && "$GITEA_FLAG_PRINT" -eq 0 && "$GITEA_FLAG_WRITE_DOCKER" -eq 0 ]]; then
+        GITEA_FLAG_ENSURE_FRESH=1
+    fi
+
+    local at
+    if ! at=$(_gitea_get_fresh_access_token); then
+        exit $?
+    fi
+
+    if [[ "$GITEA_FLAG_WRITE_DOCKER" -eq 1 ]]; then
+        gitea_write_docker_config "$at" || exit 6
+        gitea_log "Docker-Config aktualisiert: ${DOCKER_CONFIG_FILE}"
+    fi
+
+    if [[ "$GITEA_FLAG_PRINT" -eq 1 ]]; then
+        printf '%s\n' "$at"
+    fi
+
+    if [[ "$GITEA_FLAG_ENSURE_FRESH" -eq 1 && "$GITEA_FLAG_WRITE_DOCKER" -eq 0 && "$GITEA_FLAG_PRINT" -eq 0 ]]; then
+        gitea_log "Access-Token frisch"
+    fi
+    exit 0
+}
+
+cmd_gitea_status() {
+    require_gitea_lib
+    local auth_json
+    if ! auth_json=$(gitea_read_auth); then
+        printf 'Status: nicht eingeloggt\n'
+        printf 'Aktion: senity gitea-login\n'
+        exit 0
+    fi
+    local user user_id exp scopes connected freshness
+    user=$(printf '%s'      "$auth_json" | gitea_json_get gitea_user)
+    user_id=$(printf '%s'   "$auth_json" | gitea_json_get gitea_user_id)
+    exp=$(printf '%s'       "$auth_json" | gitea_json_get access_token_expires_at)
+    scopes=$(printf '%s'    "$auth_json" | gitea_json_get scopes)
+    connected=$(printf '%s' "$auth_json" | gitea_json_get connected_at)
+    freshness=$(gitea_token_freshness)
+
+    printf 'Status:        eingeloggt (%s)\n' "$freshness"
+    printf 'Gitea-User:    %s (ID %s)\n' "${user:-?}" "${user_id:-?}"
+    printf 'Host:          %s\n' "$GITEA_HOST"
+    printf 'Scopes:        %s\n' "$scopes"
+    printf 'Verbunden:     %s\n' "$(date -d "@${connected:-0}" 2>/dev/null || echo "${connected}")"
+    printf 'AT-Expires:    %s\n' "$(date -d "@${exp:-0}" 2>/dev/null || echo "${exp}")"
+    printf 'Auth-File:     %s\n' "$GITEA_AUTH_FILE"
+    printf 'Docker-Config: %s\n' "$DOCKER_CONFIG_FILE"
+    exit 0
+}
+
+cmd_gitea_logout() {
+    require_gitea_lib
+    if [[ -f "$GITEA_AUTH_FILE" ]]; then
+        local rt
+        rt=$(gitea_read_auth | gitea_json_get refresh_token || true)
+        [[ -n "$rt" ]] && gitea_revoke "$rt"
+        rm -f "$GITEA_AUTH_FILE"
+        gitea_log "auth.json geloescht, Refresh-Token revoked"
+    else
+        gitea_log "Kein Login vorhanden"
+    fi
+
+    # Docker-Auth fuer Gitea-Host entfernen (best-effort)
+    if [[ -f "$DOCKER_CONFIG_FILE" ]]; then
+        local host="${GITEA_HOST#https://}"
+        local existing; existing=$(cat "$DOCKER_CONFIG_FILE")
+        SENITY_EXISTING="$existing" SENITY_HOST_NAME="$host" python3 <<'PY' | gitea_atomic_write "$DOCKER_CONFIG_FILE" 0600 || true
+import os, json
+try:
+    cfg = json.loads(os.environ['SENITY_EXISTING'])
+    if not isinstance(cfg, dict): cfg = {}
+except Exception:
+    cfg = {}
+auths = cfg.get('auths', {})
+auths.pop(os.environ['SENITY_HOST_NAME'], None)
+cfg['auths'] = auths
+print(json.dumps(cfg, indent=2))
+PY
+        gitea_log "Docker-Auth fuer ${host} entfernt"
+    fi
+    exit 0
 }
 
 # ---- Auth-Check -------------------------------------------------------------
@@ -283,7 +506,11 @@ run_container() {
 # ---- Main -------------------------------------------------------------------
 main() {
     case "$SUBCOMMAND" in
-        login) cmd_login; exit 0 ;;
+        login)        cmd_login; exit 0 ;;
+        gitea-login)  cmd_gitea_login ;;
+        gitea-token)  cmd_gitea_token ;;
+        gitea-status) cmd_gitea_status ;;
+        gitea-logout) cmd_gitea_logout ;;
     esac
 
     require_docker

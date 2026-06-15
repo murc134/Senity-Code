@@ -310,3 +310,13 @@ Vollstaendige projekt-spezifische Regeln siehe Template:
 
 Session-Start-Listing, KNOWLEDGE-Workflow und User-Profile gelten aus der
 globalen CLAUDE.md (`C:/Users/c4rtw/.claude/CLAUDE.md`).
+
+---
+
+## KNOWLEDGE-Capture (Pflicht)
+
+Jeder gelöste Fehler, jede verstandene Tool-/Library-/Plattform-Eigenheit und jede korrigierte falsche Annahme wird als KNOWLEDGE-Ticket im zentralen Senity-Ticketing (`type_code=KNOWLEDGE`, `status_code=open`) festgehalten. Vor Task-Start mit `mcp__ticketing__list_tickets type_code=KNOWLEDGE q=<symptom>` nach existierendem Wissen suchen.
+
+**Implementierung:** Skill `knowledge-capture` (`~/.claude/skills/knowledge-capture/SKILL.md`) erzwingt zwei Modi: (1) Lookup vor Task-Start bei Fehler-Symptomen, (2) Capture nach jeder Problemlösung. Aggressiv triggern, nicht selbst-zensieren. Body-Template (Problem, Lösung, Grund, Refs) und Title-Konvention dort definiert.
+
+Globale Quelle: `~/.claude/CLAUDE.md` Sektion "KNOWLEDGE-Ticket-Workflow" (Zeile 85ff).

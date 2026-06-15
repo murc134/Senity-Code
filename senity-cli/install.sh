@@ -11,8 +11,11 @@
 set -euo pipefail
 
 INSTALL_DIR="${SENITY_INSTALL_DIR:-${HOME}/.local/bin}"
+SHARE_DIR="${SENITY_SHARE_DIR:-${HOME}/.local/share/senity}"
+LIB_DIR="${SHARE_DIR}/lib"
 TARGET="${INSTALL_DIR}/senity"
 RAW_URL="https://git.senity.ai/senity-admin/senity-code/raw/branch/main/senity-cli/senity.sh"
+LIB_RAW_URL="https://git.senity.ai/senity-admin/senity-code/raw/branch/main/senity-cli/lib/gitea-device-flow.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 log()  { printf '\033[38;5;141m[install]\033[0m %s\n' "$*"; }
@@ -27,7 +30,7 @@ require() {
 }
 
 require bash
-mkdir -p "$INSTALL_DIR"
+mkdir -p "$INSTALL_DIR" "$LIB_DIR"
 
 # Lokale Quelle bevorzugen (Repo-Install), sonst Download.
 if [[ -f "${SCRIPT_DIR}/senity.sh" ]]; then
@@ -39,8 +42,20 @@ else
     curl -fsSL "$RAW_URL" -o "$TARGET"
 fi
 
+# Lib (gitea-device-flow) mit-installieren
+if [[ -f "${SCRIPT_DIR}/lib/gitea-device-flow.sh" ]]; then
+    log "Kopiere lib/gitea-device-flow.sh -> ${LIB_DIR}/gitea-device-flow.sh"
+    cp "${SCRIPT_DIR}/lib/gitea-device-flow.sh" "${LIB_DIR}/gitea-device-flow.sh"
+else
+    require curl
+    log "Lade $LIB_RAW_URL -> ${LIB_DIR}/gitea-device-flow.sh"
+    curl -fsSL "$LIB_RAW_URL" -o "${LIB_DIR}/gitea-device-flow.sh"
+fi
+chmod 0644 "${LIB_DIR}/gitea-device-flow.sh"
+
 chmod +x "$TARGET"
 log "Installiert: $TARGET"
+log "Lib-Dir:     $LIB_DIR"
 
 # PATH-Check
 case ":$PATH:" in

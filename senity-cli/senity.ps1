@@ -27,6 +27,10 @@ param(
     [string]$Image = "",
     [Alias("comfyui-port")][int]$ComfyUIPort = 8188,
     [Alias("comfyui-gpu")][switch]$ComfyUIGpu,
+    [switch]$Headless,
+    [switch]$EnsureFresh,
+    [switch]$WriteDockerConfig,
+    [switch]$Print,
     [Alias("h", "?")][switch]$HelpRequest,
     [Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest
 )
@@ -48,6 +52,25 @@ $SkillsRepo      = "git@github.com:murc134/Claude-Skills.git"
 $CommandsRepo    = "git@github.com:murc134/Claude-Commands.git"
 $AgentsRepo      = "git@github.com:murc134/Claude-Agents.git"
 $McpsRepo        = "ssh://git@git.senity.ai:2200/senity/senity-mcps.git"
+
+# ---- Lib-Loader (gitea-device-flow) -----------------------------------------
+$ScriptDir = Split-Path -Parent $PSCommandPath
+$LibCandidates = @(
+    (Join-Path $ScriptDir "lib"),
+    (Join-Path (Split-Path -Parent $ScriptDir) "share\senity\lib"),
+    (Join-Path $env:LOCALAPPDATA "senity\lib"),
+    (Join-Path $env:USERPROFILE ".local\share\senity\lib"),
+    "C:\ProgramData\senity\lib"
+)
+$SenityGiteaAvailable = $false
+foreach ($cand in $LibCandidates) {
+    $libFile = Join-Path $cand "gitea-device-flow.ps1"
+    if (Test-Path $libFile) {
+        . $libFile
+        $SenityGiteaAvailable = $true
+        break
+    }
+}
 
 # ---- Logging ----------------------------------------------------------------
 function Write-Log  ([string]$Msg) { Write-Host "[senity] $Msg" -ForegroundColor Magenta }
@@ -78,6 +101,16 @@ OPTIONS
 SUBCOMMANDS
   login                 Senity-Proxy-Key in ~/.senity/.env hinterlegen
   comfyui               ComfyUI statt Claude Code starten
+  gitea-login           OAuth2 Device-Flow gegen git.senity.ai (Browser-Login)
+                        Flags: -Headless (Env SENITY_GITEA_RT)
+  gitea-token           Frischen Access-Token sicherstellen / ausgeben
+                        Flags: -EnsureFresh (Default), -WriteDockerConfig, -Print
+  gitea-status          Status der gespeicherten Auth (User, Scopes, Expires)
+  gitea-logout          Token revoken und ~/.senity/auth.json loeschen
+
+EXIT-CODES (gitea-*)
+  0  ok           2  auth.json fehlt    3  refresh invalid_grant
+  4  expired      5  access_denied      6  Netzwerk / Sonstiges
 "@ | Write-Host
 }
 
@@ -88,12 +121,13 @@ if ($ComfyUIPort -lt 1 -or $ComfyUIPort -gt 65535) {
 }
 
 # ---- Subcommand extrahieren -------------------------------------------------
+$KnownSubs = @("login", "gitea-login", "gitea-token", "gitea-status", "gitea-logout")
 $Subcommand = ""
 $ClaudeArgs = @()
 $afterSeparator = $false
 foreach ($arg in $Rest) {
     if (-not $afterSeparator -and $arg -eq "--") { $afterSeparator = $true; continue }
-    if (-not $afterSeparator -and $Subcommand -eq "" -and ($arg -eq "login" -or $arg -eq "comfyui")) { $Subcommand = $arg; continue }
+    if (-not $afterSeparator -and $Subcommand -eq "" -and ($arg -eq "comfyui" -or $KnownSubs -contains $arg)) { $Subcommand = $arg; continue }
     $ClaudeArgs += $arg
 }
 
@@ -294,8 +328,165 @@ function Invoke-Container([hashtable]$Env, [string]$Mode = "claude") {
     exit $LASTEXITCODE
 }
 
+# ---- Gitea Device-Flow Subcommands ------------------------------------------
+function Confirm-GiteaAvailable {
+    if (-not $SenityGiteaAvailable) {
+        Write-Err2 "gitea-device-flow.ps1 nicht gefunden (Reinstall: install.ps1)."
+        exit 6
+    }
+}
+
+function Invoke-GiteaLogin {
+    Confirm-GiteaAvailable
+    Initialize-Dirs
+    $depRc = Test-GiteaDeps
+    if ($depRc -ne 0) { exit $depRc }
+
+    # Headless: SENITY_GITEA_RT via Env, sofort persistieren ueber Refresh-Cycle
+    if ($Headless) {
+        if (-not $env:SENITY_GITEA_RT) {
+            Write-Err2 "Headless-Mode braucht SENITY_GITEA_RT in der Umgebung."
+            exit 6
+        }
+        $refreshed = Invoke-GiteaRefresh -RefreshToken $env:SENITY_GITEA_RT
+        if ($refreshed.__exit) { exit $refreshed.__exit }
+        if (-not (Save-GiteaAuth -TokenResponse $refreshed)) { exit 6 }
+        Write-Log "Headless-Login OK (auth.json geschrieben)"
+        exit 0
+    }
+
+    $init = Invoke-GiteaDeviceInit
+    if (-not $init) { exit 6 }
+    $deviceCode  = $init.device_code
+    $userCode    = $init.user_code
+    $uri         = $init.verification_uri
+    $uriComplete = $init.verification_uri_complete
+    $interval    = if ($init.interval) { [int]$init.interval } else { 5 }
+    if (-not $deviceCode -or -not $userCode) {
+        Write-Err2 "Device-Init-Response unvollstaendig"
+        exit 6
+    }
+
+    Show-GiteaUserCode -UserCode $userCode -Uri $uri -UriComplete $uriComplete
+
+    # Browser oeffnen (best-effort)
+    if ($uriComplete) {
+        try { Start-Process $uriComplete | Out-Null } catch {}
+    }
+
+    $tokenResp = Invoke-GiteaPollToken -DeviceCode $deviceCode -Interval $interval
+    if ($tokenResp.__exit) { exit $tokenResp.__exit }
+    if (-not (Save-GiteaAuth -TokenResponse $tokenResp)) { exit 6 }
+    Write-Log "Login OK"
+    exit 0
+}
+
+function Get-GiteaFreshAccessToken {
+    # Liefert PSCustomObject mit @{ status; access_token } oder $null
+    # status: missing / fresh / refreshed / stale_no_rt / invalid_grant / net_err
+    $freshness = Get-GiteaTokenFreshness
+    if ($freshness -eq "missing") { return @{ status = "missing" } }
+    $auth = Read-GiteaAuth
+    if (-not $auth) { return @{ status = "missing" } }
+    if ($freshness -eq "fresh") {
+        return @{ status = "fresh"; access_token = $auth.access_token }
+    }
+    # stale -> refresh
+    if (-not $auth.refresh_token) {
+        return @{ status = "stale_no_rt" }
+    }
+    $r = Invoke-GiteaRefresh -RefreshToken $auth.refresh_token
+    if ($r.__exit -eq 3) { return @{ status = "invalid_grant" } }
+    if ($r.__exit) { return @{ status = "net_err" } }
+    # Saven (uebernimmt neuen rt falls Server rotiert)
+    if (-not (Save-GiteaAuth -TokenResponse $r)) { return @{ status = "net_err" } }
+    return @{ status = "refreshed"; access_token = $r.access_token }
+}
+
+function Invoke-GiteaToken {
+    Confirm-GiteaAvailable
+    $depRc = Test-GiteaDeps
+    if ($depRc -ne 0) { exit $depRc }
+
+    # Default = -EnsureFresh (Wrapper-Vertrag)
+    $shouldEnsure = $true
+    if ($PSBoundParameters.ContainsKey('EnsureFresh') -and -not $EnsureFresh) { $shouldEnsure = $false }
+    if (-not $EnsureFresh -and -not $WriteDockerConfig -and -not $Print) { $shouldEnsure = $true }
+
+    $res = Get-GiteaFreshAccessToken
+    switch ($res.status) {
+        "missing"       { Write-Err2 "Kein auth.json. 'senity gitea-login' ausfuehren."; exit 2 }
+        "stale_no_rt"   { Write-Err2 "auth.json hat keinen refresh_token. Neu einloggen."; exit 2 }
+        "invalid_grant" { Write-Err2 "refresh_token ungueltig (revoked/expired). 'senity gitea-login' wiederholen."; exit 3 }
+        "net_err"       { exit 6 }
+        default { }
+    }
+
+    if ($WriteDockerConfig) {
+        if (Write-GiteaDockerConfig -AccessToken $res.access_token) {
+            Write-Log "~/.docker/config.json aktualisiert (oauth2:<token>)"
+        } else {
+            Write-Err2 "Docker-Config konnte nicht geschrieben werden"
+            exit 6
+        }
+    }
+    if ($Print) {
+        # Token nur ueber stdout, NIE ueber Logger
+        [Console]::Out.Write($res.access_token)
+        [Console]::Out.WriteLine()
+    }
+    exit 0
+}
+
+function Invoke-GiteaStatus {
+    Confirm-GiteaAvailable
+    $auth = Read-GiteaAuth
+    if (-not $auth) {
+        Write-Host "Status: kein Login (auth.json fehlt)"
+        exit 2
+    }
+    $freshness = Get-GiteaTokenFreshness
+    $expEpoch = [int]$auth.access_token_expires_at
+    $expDate = [DateTimeOffset]::FromUnixTimeSeconds($expEpoch).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz")
+    $connEpoch = [int]$auth.connected_at
+    $connDate = [DateTimeOffset]::FromUnixTimeSeconds($connEpoch).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz")
+
+    Write-Host "Status:"
+    Write-Host "  Gitea-User:   $($auth.gitea_user) (id=$($auth.gitea_user_id))"
+    Write-Host "  Scopes:       $($auth.scopes)"
+    Write-Host "  Connected:    $connDate"
+    Write-Host "  Access-Token: $freshness (expires $expDate)"
+    Write-Host "  Auth-File:    $script:GiteaAuthFile"
+    Write-Host ""
+    Write-Host "(Tokens werden absichtlich NICHT angezeigt.)"
+    exit 0
+}
+
+function Invoke-GiteaLogout {
+    Confirm-GiteaAvailable
+    $auth = Read-GiteaAuth
+    if ($auth -and $auth.refresh_token) {
+        Invoke-GiteaRevoke -RefreshToken $auth.refresh_token
+    }
+    if (Test-Path $script:GiteaAuthFile) {
+        Remove-Item -LiteralPath $script:GiteaAuthFile -Force
+        Write-Log "auth.json geloescht"
+    }
+    if (Remove-GiteaDockerEntry) {
+        Write-Log "Docker-Auth-Entry entfernt (falls vorhanden)"
+    }
+    Write-Log "Logout OK"
+    exit 0
+}
+
 # ---- Main -------------------------------------------------------------------
-if ($Subcommand -eq "login") { Invoke-Login; exit 0 }
+switch ($Subcommand) {
+    "login"         { Invoke-Login; exit 0 }
+    "gitea-login"   { Invoke-GiteaLogin }
+    "gitea-token"   { Invoke-GiteaToken }
+    "gitea-status"  { Invoke-GiteaStatus }
+    "gitea-logout"  { Invoke-GiteaLogout }
+}
 
 Test-Docker
 Initialize-Dirs
