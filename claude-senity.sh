@@ -6,6 +6,7 @@
 #   ./claude-senity.sh                              # Senity Chat Proxy
 #   ./claude-senity.sh --yolo                       # Mit Yolo-Mode
 #   ./claude-senity.sh --model claude-opus-4-7      # Modell ueberschreiben
+#   ./claude-senity.sh --comfyui                    # ComfyUI Server starten
 # ══════════════════════════════════════════════════════════════
 set -uo pipefail
 
@@ -283,6 +284,9 @@ MODEL=""
 YOLO=true
 REBUILD=false
 TEST_LINKS=false
+COMFYUI=false
+COMFYUI_PORT=8188
+COMFYUI_GPU=false
 MOUSE_REPORTING=false
 NO_MOUSE_REPORTING=false
 SHOW_HELP=false
@@ -295,9 +299,13 @@ while [[ $# -gt 0 ]]; do
         --no-yolo)     YOLO=false; shift ;;
         --rebuild)     REBUILD=true; shift ;;
         --test-links)  TEST_LINKS=true; shift ;;
+        --comfyui)     COMFYUI=true; shift ;;
+        --comfyui-port) COMFYUI_PORT="$2"; shift 2 ;;
+        --comfyui-gpu) COMFYUI_GPU=true; shift ;;
         --mouse-reporting) MOUSE_REPORTING=true; shift ;;
         --no-mouse-reporting) NO_MOUSE_REPORTING=true; shift ;;
         -h|--help)     SHOW_HELP=true; shift ;;
+        --)            shift; EXTRA+=("$@"); break ;;
         *)             EXTRA+=("$1"); shift ;;
     esac
 done
@@ -318,7 +326,7 @@ echo ""
 write_dbg "ScriptDir  : $SCRIPT_DIR"
 write_dbg "Shell      : $BASH_VERSION"
 write_dbg "User       : $(whoami)  PID: $$"
-write_dbg "Args       : Yolo=$YOLO Model=$MODEL"
+write_dbg "Args       : Yolo=$YOLO Model=$MODEL ComfyUI=$COMFYUI"
 echo ""
 
 # ── Help ──
@@ -333,11 +341,18 @@ if [[ "$SHOW_HELP" == true ]]; then
     printf "  ${c_white}  --no-yolo       Yolo Mode deaktivieren (Permission-Prompts)${c_reset}\n"
     printf "  ${c_white}  --rebuild       Docker-Image neu bauen (force)${c_reset}\n"
     printf "  ${c_white}  --test-links    Datei-/Ordner-/Weblink-Ausgabe testen${c_reset}\n"
+    printf "  ${c_white}  --comfyui       ComfyUI statt Claude Code starten${c_reset}\n"
+    printf "  ${c_white}  --comfyui-port N Host-Port fuer ComfyUI (Default: 8188)${c_reset}\n"
+    printf "  ${c_white}  --comfyui-gpu   Docker mit --gpus all starten${c_reset}\n"
     printf "  ${c_white}  --mouse-reporting     Mausereignisse an Claude Code durchreichen${c_reset}\n"
     printf "  ${c_white}  --no-mouse-reporting  Mausereignisse fuer Terminal-Links reservieren${c_reset}\n"
     printf "  ${c_white}  -h, --help      Diese Hilfe${c_reset}\n"
     echo ""
     exit 0
+fi
+
+if ! [[ "$COMFYUI_PORT" =~ ^[0-9]+$ ]] || (( COMFYUI_PORT < 1 || COMFYUI_PORT > 65535 )); then
+    exit_error "--comfyui-port muss zwischen 1 und 65535 liegen."
 fi
 
 # ══════════════════════════════════════════════════════════════
@@ -1236,6 +1251,15 @@ DOCKER_ARGS+=(-e "SENITY_FILE_LINK_FORMAT=${SENITY_FILE_LINK_FORMAT:-}")
 DOCKER_ARGS+=(-e "SENITY_VISIBLE_HOST_PATHS=${SENITY_VISIBLE_HOST_PATHS:-}")
 DOCKER_ARGS+=(-e "SENITY_LINKIFY=1")
 DOCKER_ARGS+=(-e "SENITY_LINK_PATH_MAP=${link_path_map_json}")
+if [[ "$COMFYUI" == true ]]; then
+    DOCKER_ARGS+=(-p "127.0.0.1:${COMFYUI_PORT}:8188")
+    DOCKER_ARGS+=(-e "SENITY_COMFYUI_PORT=8188")
+    DOCKER_ARGS+=(-e "SENITY_COMFYUI_HOST_PORT=${COMFYUI_PORT}")
+    DOCKER_ARGS+=(-e "SENITY_MODEL_SYNC=0")
+    if [[ "$COMFYUI_GPU" == true ]]; then
+        DOCKER_ARGS+=(--gpus all)
+    fi
+fi
 
 # Claude-Argumente
 CLAUDE_ARGS=("senity-mascot-filter" "claude" "--model" "$MODEL")
@@ -1250,8 +1274,11 @@ fi
 # weiter. Wenn der Nutzer eigene positionale Argumente uebergeben hat (EXTRA
 # enthaelt mind. ein Argument ohne "-"-Praefix), wird die Datei nicht
 # geschrieben und Claude startet ohne automatische Nachricht.
+# Im ComfyUI-Modus wird grundsaetzlich kein Claude-Initial-Prompt geschrieben.
 has_user_prompt=false
-if [[ ${#EXTRA[@]} -gt 0 ]]; then
+if [[ "$COMFYUI" == true ]]; then
+    has_user_prompt=true
+elif [[ ${#EXTRA[@]} -gt 0 ]]; then
     for e in "${EXTRA[@]}"; do
         if [[ -n "$e" && "${e:0:1}" != "-" ]]; then
             has_user_prompt=true
@@ -1293,10 +1320,17 @@ write_info "[6/6] Container starten..."
 
 echo ""
 printf "  ${c_magenta}════════════════════════════════════════════${c_reset}\n"
-printf "  ${c_white}Provider  : Senity Chat Proxy${c_reset}\n"
-printf "  ${c_white}URL       : %s${c_reset}\n" "$base_url"
-printf "  ${c_white}Modell    : %s${c_reset}\n" "$model_label"
-printf "  ${c_white}Yolo      : %s${c_reset}\n" "$YOLO"
+if [[ "$COMFYUI" == true ]]; then
+    printf "  ${c_white}Modus     : ComfyUI${c_reset}\n"
+    printf "  ${c_white}URL       : http://127.0.0.1:%s${c_reset}\n" "$COMFYUI_PORT"
+    printf "  ${c_white}Modelle   : workspace/.comfyui/models${c_reset}\n"
+    printf "  ${c_white}GPU       : %s${c_reset}\n" "$COMFYUI_GPU"
+else
+    printf "  ${c_white}Provider  : Senity Chat Proxy${c_reset}\n"
+    printf "  ${c_white}URL       : %s${c_reset}\n" "$base_url"
+    printf "  ${c_white}Modell    : %s${c_reset}\n" "$model_label"
+    printf "  ${c_white}Yolo      : %s${c_reset}\n" "$YOLO"
+fi
 printf "  ${c_white}Container : %s${c_reset}\n" "$container_name"
 printf "  ${c_magenta}════════════════════════════════════════════${c_reset}\n"
 echo ""
@@ -1330,11 +1364,17 @@ print(f"Ordner  : {folder_path}/")
     exit $?
 fi
 
-printf "  ${c_green}Starte Claude Code... (Ctrl+C zum Beenden)${c_reset}\n"
+if [[ "$COMFYUI" == true ]]; then
+    printf "  ${c_green}Starte ComfyUI... (Ctrl+C zum Beenden)${c_reset}\n"
+else
+    printf "  ${c_green}Starte Claude Code... (Ctrl+C zum Beenden)${c_reset}\n"
+fi
 echo ""
 
 set +e
-if [[ ${#EXTRA[@]} -gt 0 ]]; then
+if [[ "$COMFYUI" == true ]]; then
+    docker run "${DOCKER_ARGS[@]}" senity-claude:latest senity-comfyui "${EXTRA[@]}"
+elif [[ ${#EXTRA[@]} -gt 0 ]]; then
     docker run "${DOCKER_ARGS[@]}" senity-claude:latest "${CLAUDE_ARGS[@]}" "${EXTRA[@]}"
 else
     docker run "${DOCKER_ARGS[@]}" senity-claude:latest "${CLAUDE_ARGS[@]}"
@@ -1344,13 +1384,17 @@ set -e
 
 echo ""
 if [[ $container_exit -eq 0 || $container_exit -eq 130 ]]; then
-    write_ok "Claude Code beendet (Exit: $container_exit)"
+    if [[ "$COMFYUI" == true ]]; then
+        write_ok "ComfyUI beendet (Exit: $container_exit)"
+    else
+        write_ok "Claude Code beendet (Exit: $container_exit)"
+    fi
 else
     write_fail "Container beendet mit Exit-Code: $container_exit"
     case $container_exit in
         125) write_info "Exit 125: Docker konnte Container nicht starten (Image-Problem?)" ;;
         126) write_info "Exit 126: Entrypoint nicht ausfuehrbar" ;;
-        127) write_info "Exit 127: 'claude' nicht gefunden im Container" ;;
+        127) write_info "Exit 127: Startbefehl nicht gefunden im Container" ;;
         1)   write_info "Exit 1: Allgemeiner Fehler" ;;
         *)   write_info "Unbekannter Exit-Code. Logs: docker logs $container_name" ;;
     esac

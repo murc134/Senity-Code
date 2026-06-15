@@ -15,6 +15,7 @@
 #   senity -Mount H:C[:ro]      Zusatz-Mount (mehrfach)
 #   senity -Image <ref>         Image-Tag ueberschreiben
 #   senity login                Senity-Proxy-Key einrichten
+#   senity comfyui              ComfyUI Server starten
 #   senity -h                   Hilfe
 
 [CmdletBinding(PositionalBinding=$false)]
@@ -24,6 +25,8 @@ param(
     [switch]$Yolo,
     [string[]]$Mount = @(),
     [string]$Image = "",
+    [Alias("comfyui-port")][int]$ComfyUIPort = 8188,
+    [Alias("comfyui-gpu")][switch]$ComfyUIGpu,
     [Alias("h", "?")][switch]$HelpRequest,
     [Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest
 )
@@ -59,6 +62,7 @@ senity - Senity-Workspace-Container auf Knopfdruck
 USAGE
   senity [options] [-- claude-args...]
   senity login
+  senity comfyui [-- comfyui-args...]
   senity -h
 
 OPTIONS
@@ -67,20 +71,29 @@ OPTIONS
   -Yolo                 Yolo explizit an (Default)
   -Mount H:C[:ro]       Zusatz-Mount, mehrfach erlaubt
   -Image <ref>          Image-Tag ueberschreiben
+  -ComfyUIPort <port>   Host-Port fuer ComfyUI (Default: 8188)
+  -ComfyUIGpu           Docker mit --gpus all starten
   -h                    Diese Hilfe
 
 SUBCOMMANDS
   login                 Senity-Proxy-Key in ~/.senity/.env hinterlegen
+  comfyui               ComfyUI statt Claude Code starten
 "@ | Write-Host
 }
 
 if ($HelpRequest) { Show-Help; exit 0 }
+if ($ComfyUIPort -lt 1 -or $ComfyUIPort -gt 65535) {
+    Write-Err2 "-ComfyUIPort muss zwischen 1 und 65535 liegen."
+    exit 1
+}
 
 # ---- Subcommand extrahieren -------------------------------------------------
 $Subcommand = ""
 $ClaudeArgs = @()
+$afterSeparator = $false
 foreach ($arg in $Rest) {
-    if ($Subcommand -eq "" -and $arg -eq "login") { $Subcommand = "login"; continue }
+    if (-not $afterSeparator -and $arg -eq "--") { $afterSeparator = $true; continue }
+    if (-not $afterSeparator -and $Subcommand -eq "" -and ($arg -eq "login" -or $arg -eq "comfyui")) { $Subcommand = $arg; continue }
     $ClaudeArgs += $arg
 }
 
@@ -224,9 +237,10 @@ function ConvertTo-DockerPath([string]$Path) {
 }
 
 # ---- Container starten ------------------------------------------------------
-function Invoke-Container([hashtable]$Env) {
+function Invoke-Container([hashtable]$Env, [string]$Mode = "claude") {
     $cwd = (Get-Location).Path
     $containerName = "senity-$PID-$([int][double]::Parse((Get-Date -UFormat %s)))"
+    $isComfyUI = ($Mode -eq "comfyui")
 
     $dockerArgs = @(
         "run", "--rm", "-it",
@@ -239,6 +253,15 @@ function Invoke-Container([hashtable]$Env) {
         "-v", "$($SenityWsDir):/workspace",
         "-v", "$($cwd):/workspace/cwd"
     )
+    if ($isComfyUI) {
+        $dockerArgs += @(
+            "-p", "127.0.0.1:${ComfyUIPort}:8188",
+            "-e", "SENITY_COMFYUI_PORT=8188",
+            "-e", "SENITY_COMFYUI_HOST_PORT=$ComfyUIPort",
+            "-e", "SENITY_MODEL_SYNC=0"
+        )
+        if ($ComfyUIGpu) { $dockerArgs += @("--gpus", "all") }
+    }
 
     $skillsSrc   = Join-Path $SenityCacheDir "skills\skills"
     $commandsSrc = Join-Path $SenityCacheDir "commands\commands"
@@ -256,9 +279,16 @@ function Invoke-Container([hashtable]$Env) {
 
     foreach ($m in $Mount) { if ($m) { $dockerArgs += @("-v", $m) } }
 
-    $dockerArgs += @("-w", "/workspace/cwd", $script:Image, "senity-mascot-filter", "claude")
-    if (-not $NoYolo) { $dockerArgs += "--dangerously-skip-permissions" }
-    foreach ($a in $ClaudeArgs) { if ($a) { $dockerArgs += $a } }
+    $dockerArgs += @("-w", "/workspace/cwd", $script:Image)
+    if ($isComfyUI) {
+        Write-Log "Starte ComfyUI: http://127.0.0.1:$ComfyUIPort"
+        $dockerArgs += "senity-comfyui"
+        foreach ($a in $ClaudeArgs) { if ($a) { $dockerArgs += $a } }
+    } else {
+        $dockerArgs += @("senity-mascot-filter", "claude")
+        if (-not $NoYolo) { $dockerArgs += "--dangerously-skip-permissions" }
+        foreach ($a in $ClaudeArgs) { if ($a) { $dockerArgs += $a } }
+    }
 
     & docker @dockerArgs
     exit $LASTEXITCODE
@@ -269,7 +299,13 @@ if ($Subcommand -eq "login") { Invoke-Login; exit 0 }
 
 Test-Docker
 Initialize-Dirs
-$envData = Get-Env
+if ($Subcommand -eq "comfyui") {
+    $envData = Read-EnvFile
+    if (-not $envData.SENITY_CHAT_PROXY_URL) { $envData.SENITY_CHAT_PROXY_URL = $DefaultProxyUrl }
+    if (-not $envData.SENITY_CHAT_PROXY_KEY) { $envData.SENITY_CHAT_PROXY_KEY = "" }
+} else {
+    $envData = Get-Env
+}
 
 if ($SkipUpdate) {
     Write-Log "Auto-Update uebersprungen (-SkipUpdate)"
@@ -278,4 +314,5 @@ if ($SkipUpdate) {
     Invoke-Update
 }
 
-Invoke-Container -Env $envData
+$mode = if ($Subcommand -eq "comfyui") { "comfyui" } else { "claude" }
+Invoke-Container -Env $envData -Mode $mode

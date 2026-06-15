@@ -5,6 +5,7 @@
 #   .\claude-senity.ps1                    # Senity Chat Proxy (einziger Provider)
 #   .\claude-senity.ps1 --yolo             # Yolo Mode (ungefragte Ausfuehrung)
 #   .\claude-senity.ps1 --model NAME       # Modell ueberschreiben
+#   .\claude-senity.ps1 --comfyui          # ComfyUI Server starten
 #   .\claude-senity.ps1 --create-shortcut  # Desktop-Verknuepfung erstellen
 #   .\claude-senity.ps1 --test-links       # Link-Ausgabe im Terminal testen
 # ══════════════════════════════════════════════════════════════
@@ -27,6 +28,9 @@ $Rebuild = $false
 $CreateShortcut = $false
 $UpdateWsl = $false
 $TestLinks = $false
+$ComfyUI = $false
+$ComfyUIPort = 8188
+$ComfyUIGpu = $false
 $MouseReporting = $false
 $NoMouseReporting = $false
 $Help = $false
@@ -36,6 +40,12 @@ if ($AllArgs) {
     for ($i = 0; $i -lt $AllArgs.Count; $i++) {
         $a = $AllArgs[$i]
         if ([string]::IsNullOrWhiteSpace($a)) { continue }
+        if ($a -eq '--') {
+            if ($i + 1 -lt $AllArgs.Count) {
+                $Rest += $AllArgs[($i + 1)..($AllArgs.Count - 1)]
+            }
+            break
+        }
         $key = ($a -replace '^--', '-').ToLowerInvariant()
         switch ($key) {
             '-yolo'            { $Yolo = $true }
@@ -52,6 +62,17 @@ if ($AllArgs) {
             '-updatewsl'       { $UpdateWsl = $true }
             '-test-links'      { $TestLinks = $true }
             '-testlinks'       { $TestLinks = $true }
+            '-comfyui'         { $ComfyUI = $true }
+            '-comfyui-port'    {
+                $i++
+                if ($i -lt $AllArgs.Count -and $AllArgs[$i] -match '^\d+$') { $ComfyUIPort = [int]$AllArgs[$i] }
+            }
+            '-comfyuiport'     {
+                $i++
+                if ($i -lt $AllArgs.Count -and $AllArgs[$i] -match '^\d+$') { $ComfyUIPort = [int]$AllArgs[$i] }
+            }
+            '-comfyui-gpu'     { $ComfyUIGpu = $true }
+            '-comfyuigpu'      { $ComfyUIGpu = $true }
             '-mouse-reporting' { $MouseReporting = $true }
             '-mousereporting'  { $MouseReporting = $true }
             '-no-mouse-reporting' { $NoMouseReporting = $true }
@@ -86,6 +107,9 @@ function Get-OriginalLauncherArgs {
     if ($CreateShortcut) { $a += '-CreateShortcut' }
     if ($UpdateWsl)      { $a += '-UpdateWsl' }
     if ($TestLinks)      { $a += '-TestLinks' }
+    if ($ComfyUI)        { $a += '-ComfyUI' }
+    if ($ComfyUIPort -ne 8188) { $a += '-ComfyUIPort'; $a += "$ComfyUIPort" }
+    if ($ComfyUIGpu)     { $a += '-ComfyUIGpu' }
     if ($MouseReporting) { $a += '-MouseReporting' }
     if ($NoMouseReporting) { $a += '-NoMouseReporting' }
     if ($Help)           { $a += '-Help' }
@@ -612,7 +636,7 @@ Write-Host ""
 Write-DBG "ScriptDir  : $ScriptDir"
 Write-DBG "PowerShell : $($PSVersionTable.PSVersion)"
 Write-DBG "User       : $($env:USERNAME)  PID: $PID"
-Write-DBG "Args       : Yolo=$Yolo Model=$Model"
+Write-DBG "Args       : Yolo=$Yolo Model=$Model ComfyUI=$ComfyUI"
 Write-Host ""
 
 # ── Help ──
@@ -626,11 +650,18 @@ if ($Help) {
     Write-Host "    --yolo             Yolo Mode (Default: an, Container ist isoliert)" -ForegroundColor White
     Write-Host "    --no-yolo          Yolo Mode deaktivieren (Permission-Prompts)" -ForegroundColor White
     Write-Host "    --rebuild          Docker-Image neu bauen (force)" -ForegroundColor White
+    Write-Host "    --comfyui          ComfyUI statt Claude Code starten" -ForegroundColor White
+    Write-Host "    --comfyui-port N   Host-Port fuer ComfyUI (Default: 8188)" -ForegroundColor White
+    Write-Host "    --comfyui-gpu      Docker mit --gpus all starten" -ForegroundColor White
     Write-Host "    --create-shortcut  Desktop-Verknuepfung erstellen und beenden" -ForegroundColor White
     Write-Host "    --update-wsl       'wsl --update' einmalig erzwingen (Docker vorher beenden!)" -ForegroundColor White
     Write-Host "    --help             Diese Hilfe" -ForegroundColor White
     Write-Host ""
     exit 0
+}
+
+if ($ComfyUIPort -lt 1 -or $ComfyUIPort -gt 65535) {
+    Exit-Error "--comfyui-port muss zwischen 1 und 65535 liegen."
 }
 
 # ── Desktop-Shortcut erstellen und beenden ──
@@ -677,6 +708,9 @@ if (-not $hasTTY) {
         if ($NoYolo)  { $flagParts += "-NoYolo" }
         if ($Rebuild) { $flagParts += "-Rebuild" }
         if ($Model)   { $flagParts += "-Model '$Model'" }
+        if ($ComfyUI) { $flagParts += "-ComfyUI" }
+        if ($ComfyUIPort -ne 8188) { $flagParts += "-ComfyUIPort $ComfyUIPort" }
+        if ($ComfyUIGpu) { $flagParts += "-ComfyUIGpu" }
         foreach ($r in $Rest) { $flagParts += $r }
         $argStr = $flagParts -join " "
 
@@ -1543,6 +1577,17 @@ $dockerArgs += @(
     "-e", "SENITY_LINKIFY=1",
     "-e", "SENITY_LINK_PATH_MAP=$linkPathMapJson"
 )
+if ($ComfyUI) {
+    $dockerArgs += @(
+        "-p", "127.0.0.1:${ComfyUIPort}:8188",
+        "-e", "SENITY_COMFYUI_PORT=8188",
+        "-e", "SENITY_COMFYUI_HOST_PORT=$ComfyUIPort",
+        "-e", "SENITY_MODEL_SYNC=0"
+    )
+    if ($ComfyUIGpu) {
+        $dockerArgs += @("--gpus", "all")
+    }
+}
 
 $claudeArgs = @()
 if ($Model) { $claudeArgs += @("--model", $Model) }
@@ -1555,11 +1600,14 @@ if ($yolo)  { $claudeArgs += "--dangerously-skip-permissions" }
 # (sichtbar im Chat). Wenn der Nutzer einen eigenen positionalen Prompt
 # uebergeben hat ($Rest enthaelt ein Argument ohne "-"-Praefix), wird die
 # Datei NICHT geschrieben und Claude startet ohne automatische Nachricht.
-$hasUserPrompt = $false
-foreach ($r in $Rest) {
-    if ($null -ne $r -and "$r".Length -gt 0 -and -not ("$r".StartsWith('-'))) {
-        $hasUserPrompt = $true
-        break
+# Im ComfyUI-Modus wird grundsaetzlich kein Claude-Initial-Prompt geschrieben.
+$hasUserPrompt = [bool]$ComfyUI
+if (-not $ComfyUI) {
+    foreach ($r in $Rest) {
+        if ($null -ne $r -and "$r".Length -gt 0 -and -not ("$r".StartsWith('-'))) {
+            $hasUserPrompt = $true
+            break
+        }
     }
 }
 
@@ -1596,10 +1644,17 @@ Write-INFO "[6/6] Container starten..."
 
 Write-Host ""
 Write-Host "  ════════════════════════════════════════════" -ForegroundColor Magenta
-Write-Host "  Provider  : Senity Chat Proxy" -ForegroundColor White
-Write-Host "  URL       : $baseUrl" -ForegroundColor White
-Write-Host "  Modell    : $modelLabel" -ForegroundColor White
-Write-Host "  Yolo      : $([bool]$yolo)" -ForegroundColor White
+if ($ComfyUI) {
+    Write-Host "  Modus     : ComfyUI" -ForegroundColor White
+    Write-Host "  URL       : http://127.0.0.1:$ComfyUIPort" -ForegroundColor White
+    Write-Host "  Modelle   : workspace\.comfyui\models" -ForegroundColor White
+    Write-Host "  GPU       : $([bool]$ComfyUIGpu)" -ForegroundColor White
+} else {
+    Write-Host "  Provider  : Senity Chat Proxy" -ForegroundColor White
+    Write-Host "  URL       : $baseUrl" -ForegroundColor White
+    Write-Host "  Modell    : $modelLabel" -ForegroundColor White
+    Write-Host "  Yolo      : $([bool]$yolo)" -ForegroundColor White
+}
 Write-Host "  Container : $containerName" -ForegroundColor White
 Write-Host "  ════════════════════════════════════════════" -ForegroundColor Magenta
 Write-Host ""
@@ -1633,21 +1688,29 @@ print(f"Ordner  : {folder_path}/")
     exit $LASTEXITCODE
 }
 
-Write-Host "  Starte Claude Code... (Ctrl+C zum Beenden)" -ForegroundColor Green
-Write-Host ""
-
-docker run @dockerArgs senity-claude:latest senity-mascot-filter claude @claudeArgs @Rest
+if ($ComfyUI) {
+    Write-Host "  Starte ComfyUI... (Ctrl+C zum Beenden)" -ForegroundColor Green
+    Write-Host ""
+    docker run @dockerArgs senity-claude:latest senity-comfyui @Rest
+} else {
+    Write-Host "  Starte Claude Code... (Ctrl+C zum Beenden)" -ForegroundColor Green
+    Write-Host ""
+    docker run @dockerArgs senity-claude:latest senity-mascot-filter claude @claudeArgs @Rest
+}
 $containerExit = $LASTEXITCODE
-
 Write-Host ""
 if ($containerExit -eq 0 -or $containerExit -eq 130) {
-    Write-OK "Claude Code beendet (Exit: $containerExit)"
+    if ($ComfyUI) {
+        Write-OK "ComfyUI beendet (Exit: $containerExit)"
+    } else {
+        Write-OK "Claude Code beendet (Exit: $containerExit)"
+    }
 } else {
     Write-FAIL "Container beendet mit Exit-Code: $containerExit"
     switch ($containerExit) {
         125 { Write-INFO "Exit 125: Docker konnte Container nicht starten (Image-Problem?)"; break }
         126 { Write-INFO "Exit 126: Entrypoint nicht ausfuehrbar"; break }
-        127 { Write-INFO "Exit 127: 'claude' nicht gefunden im Container"; break }
+        127 { Write-INFO "Exit 127: Startbefehl nicht gefunden im Container"; break }
         1   { Write-INFO "Exit 1: Allgemeiner Fehler"; break }
         default { Write-INFO "Unbekannter Exit-Code. Logs: docker logs $containerName" }
     }

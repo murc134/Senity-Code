@@ -23,11 +23,13 @@ Einziger Provider: **Senity Chat Proxy**.
 .\claude-senity.bat --yolo
 .\claude-senity.bat --create-shortcut   # Desktop-Verknuepfung einmalig anlegen
 .\claude-senity.bat --test-links        # Datei-/Ordner-/Weblink-Klicks testen
+.\claude-senity.bat --comfyui           # ComfyUI starten
 
 # Linux / macOS
 ./claude-senity.sh
 ./claude-senity.sh --yolo
 ./claude-senity.sh --test-links
+./claude-senity.sh --comfyui
 ```
 
 ## Was beim ersten Start passiert
@@ -64,6 +66,86 @@ Optionale Schalter:
 SENITY_MODEL_SYNC=0                 # Model-Sync deaktivieren
 SENITY_MODEL_SYNC_TIMEOUT_MS=5000   # API-Timeout anpassen
 ```
+
+## ComfyUI / lokale Bildgenerierung
+
+Das Image enthaelt ComfyUI in einem eigenen Python-venv unter `/opt/comfyui`.
+Der normale Claude-Code-Start bleibt unveraendert; ComfyUI wird nur im
+separaten Modus gestartet:
+
+```bash
+# Windows
+.\claude-senity.bat --comfyui
+.\claude-senity.bat --comfyui --comfyui-port 8288
+
+# Linux / macOS
+./claude-senity.sh --comfyui
+./claude-senity.sh --comfyui --comfyui-port 8288
+
+# Globale CLI
+senity comfyui
+senity comfyui --comfyui-port 8288
+```
+
+Danach ist die UI auf `http://127.0.0.1:8188` erreichbar, beziehungsweise auf
+dem mit `--comfyui-port` gesetzten Host-Port. Zusatzargumente fuer ComfyUI
+kommen nach `--`, z.B.:
+
+```bash
+./claude-senity.sh --comfyui -- --lowvram
+.\claude-senity.bat --comfyui -- --cpu
+```
+
+Persistente Daten liegen unter `workspace/.comfyui/`:
+
+```text
+workspace/.comfyui/
+├── models/
+│   ├── checkpoints/
+│   ├── vae/
+│   ├── loras/
+│   ├── controlnet/
+│   ├── clip/
+│   ├── clip_vision/
+│   ├── diffusion_models/
+│   ├── unet/
+│   ├── upscale_models/
+│   └── embeddings/
+├── input/
+├── output/
+├── user/
+└── custom_nodes/
+```
+
+Modelle werden bewusst nicht automatisch heruntergeladen. Lege `.safetensors`-
+Dateien je nach Typ in die passenden Unterordner, zum Beispiel Checkpoints nach
+`workspace/.comfyui/models/checkpoints/` und LoRAs nach
+`workspace/.comfyui/models/loras/`.
+
+Standardmaessig baut das Image mit CPU-PyTorch, damit es auf allen Docker-Hosts
+laeuft. Wenn CUDA im Container nicht verfuegbar ist, startet der Wrapper ComfyUI
+automatisch mit `--cpu`. CPU-Generierung funktioniert, ist aber langsam. Fuer
+NVIDIA-GPU-Nutzung:
+
+```powershell
+# Runtime-GPU-Zugriff aktivieren
+.\claude-senity.bat --comfyui --comfyui-gpu
+
+# Image mit CUDA-PyTorch neu bauen, Version passend zur lokalen Umgebung waehlen
+docker build --provenance=false --build-arg COMFYUI_TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130 -t senity-claude:latest .
+```
+
+```bash
+# Runtime-GPU-Zugriff aktivieren
+./claude-senity.sh --comfyui --comfyui-gpu
+
+# Image mit CUDA-PyTorch neu bauen, Version passend zur lokalen Umgebung waehlen
+docker build --provenance=false --build-arg COMFYUI_TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130 -t senity-claude:latest .
+```
+
+`--comfyui-gpu` fuegt nur `docker run --gpus all` hinzu. Fuer echte CUDA-
+Beschleunigung muss im Image auch eine CUDA-faehige PyTorch-Variante installiert
+sein.
 
 ## Mount-Pfade
 
@@ -186,11 +268,12 @@ Die Senity-Farben sind auf zwei Ebenen aufgeteilt:
 PRIMARY_256=99        # dunkles Senity-Lila
 SECONDARY_256=141     # helles Senity-Lila
 ACCENT_256=199        # Pink-Glow
+LINK_256=68           # Datei-/Ordner-/Weblinks im Terminal-Linkifier
 ```
 
 - `patch-claude-header.js` patcht beim Image-Build Branding-Strings ("Welcome back!" -> "Willkommen bei Senity!" etc.) und laengenerhaltende Fallback-Farbcodes im Claude-Code-Bundle.
 - `docker-entrypoint.sh` liest `senity-theme.conf` zur Laufzeit fuer das ASCII-Banner und installiert/aktiviert `senity-theme.json` als Custom-Theme.
-- `senity-mascot-filter.py` setzt zusaetzlich klickbare OSC-8-Links fuer Web-URLs und vorhandene Dateipfade (`/workspace/...`, relative Pfade, `.bindings`-Mounts), damit Strg+Klick im Terminal die Host-Datei oeffnet. Mit `--test-links` gibt der Launcher je einen Web-, Datei- und Ordnerlink aus.
+- `senity-mascot-filter.py` ersetzt den kompakten Claude-Code-Start-Mascot durch ein kleines Senity-Mascot und setzt zusaetzlich klickbare OSC-8-Links fuer Web-URLs und vorhandene Dateipfade (`/workspace/...`, relative Pfade, `.bindings`-Mounts), damit Strg+Klick im Terminal die Host-Datei oeffnet. Die sichtbare Linkfarbe kommt aus `LINK_RGB` in `senity-theme.conf`. Mit `--test-links` gibt der Launcher je einen Web-, Datei- und Ordnerlink aus.
 
 ### Klickbare Links / Warp
 
@@ -257,7 +340,7 @@ Aenderungen an `senity-theme.conf` benoetigen einen Image-Rebuild:
 ./claude-senity.sh --rebuild
 ```
 
-Baut das Image neu und ersetzt `senity-claude:latest` erst nach erfolgreichem Build. Noetig nach Aenderungen an `Dockerfile`, `senity-theme.conf`, `patch-claude-header.js`, `senity-mascot-filter.py` oder `docker-entrypoint.sh`.
+Baut das Image neu und ersetzt `senity-claude:latest` erst nach erfolgreichem Build. Noetig nach Aenderungen an `Dockerfile`, `senity-theme.conf`, `patch-claude-header.js`, `senity-mascot-filter.py`, `senity-comfyui` oder `docker-entrypoint.sh`.
 
 ## Troubleshooting
 

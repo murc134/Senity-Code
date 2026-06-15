@@ -15,6 +15,7 @@
 #   senity --mount H:C[:ro]         Zusatz-Mount (mehrfach erlaubt)
 #   senity --image <ref>            Image-Tag ueberschreiben
 #   senity login                    Senity-Proxy-Key einrichten
+#   senity comfyui                  ComfyUI Server starten
 #   senity --help                   Hilfe
 
 set -euo pipefail
@@ -46,6 +47,8 @@ YOLO=1
 EXTRA_MOUNTS=()
 IMAGE_OVERRIDE=""
 SUBCOMMAND=""
+COMFYUI_PORT=8188
+COMFYUI_GPU=0
 CLAUDE_ARGS=()
 
 print_help() {
@@ -55,6 +58,7 @@ senity — Senity-Workspace-Container auf Knopfdruck
 USAGE
   senity [options] [-- claude-args...]
   senity login
+  senity comfyui [-- comfyui-args...]
   senity --help
 
 OPTIONS
@@ -63,10 +67,13 @@ OPTIONS
   --yolo                Yolo explizit an (Default)
   --mount H:C[:ro]      Zusatz-Mount, mehrfach erlaubt
   --image <ref>         Image-Tag ueberschreiben
+  --comfyui-port <port> Host-Port fuer ComfyUI (Default: 8188)
+  --comfyui-gpu         Docker mit --gpus all starten
   --help, -h            Diese Hilfe
 
 SUBCOMMANDS
   login                 Senity-Proxy-Key in ~/.senity/.env hinterlegen
+  comfyui               ComfyUI statt Claude Code starten
 
 EOF
 }
@@ -78,14 +85,22 @@ while [[ $# -gt 0 ]]; do
         --yolo)        YOLO=1; shift ;;
         --mount)       EXTRA_MOUNTS+=("$2"); shift 2 ;;
         --image)       IMAGE_OVERRIDE="$2"; shift 2 ;;
+        --comfyui-port) COMFYUI_PORT="$2"; shift 2 ;;
+        --comfyui-gpu) COMFYUI_GPU=1; shift ;;
         --help|-h)     print_help; exit 0 ;;
         login)         SUBCOMMAND="login"; shift ;;
+        comfyui)       SUBCOMMAND="comfyui"; shift ;;
         --)            shift; CLAUDE_ARGS=("$@"); break ;;
         *)             CLAUDE_ARGS+=("$1"); shift ;;
     esac
 done
 
 IMAGE="${IMAGE_OVERRIDE:-$DEFAULT_IMAGE}"
+
+if ! [[ "$COMFYUI_PORT" =~ ^[0-9]+$ ]] || (( COMFYUI_PORT < 1 || COMFYUI_PORT > 65535 )); then
+    err "--comfyui-port muss zwischen 1 und 65535 liegen."
+    exit 1
+fi
 
 # ---- Prerequisites ----------------------------------------------------------
 require_docker() {
@@ -207,6 +222,8 @@ run_container() {
     local cwd
     cwd="$(pwd)"
     local container_name="senity-$$-$(date +%s)"
+    local is_comfyui=0
+    [[ "$SUBCOMMAND" == "comfyui" ]] && is_comfyui=1
 
     local -a docker_args=(
         run --rm -it
@@ -219,6 +236,16 @@ run_container() {
         -v "$SENITY_WORKSPACE_DIR:/workspace"
         -v "$cwd:/workspace/cwd"
     )
+
+    if [[ "$is_comfyui" -eq 1 ]]; then
+        docker_args+=(-p "127.0.0.1:${COMFYUI_PORT}:8188")
+        docker_args+=(-e "SENITY_COMFYUI_PORT=8188")
+        docker_args+=(-e "SENITY_COMFYUI_HOST_PORT=${COMFYUI_PORT}")
+        docker_args+=(-e "SENITY_MODEL_SYNC=0")
+        if [[ "$COMFYUI_GPU" -eq 1 ]]; then
+            docker_args+=(--gpus all)
+        fi
+    fi
 
     [[ -d "$SENITY_CACHE_DIR/skills/skills" ]]      && docker_args+=(-v "$SENITY_CACHE_DIR/skills/skills:/workspace/.claude/skills/intern:ro")
     [[ -d "$SENITY_CACHE_DIR/commands/commands" ]]  && docker_args+=(-v "$SENITY_CACHE_DIR/commands/commands:/workspace/.claude/commands/intern:ro")
@@ -236,7 +263,10 @@ run_container() {
 
     docker_args+=(-w /workspace/cwd "$IMAGE")
 
-    if [[ "$YOLO" -eq 1 ]]; then
+    if [[ "$is_comfyui" -eq 1 ]]; then
+        log "Starte ComfyUI: http://127.0.0.1:${COMFYUI_PORT}"
+        docker_args+=(senity-comfyui)
+    elif [[ "$YOLO" -eq 1 ]]; then
         docker_args+=(senity-mascot-filter claude --dangerously-skip-permissions)
     else
         docker_args+=(senity-mascot-filter claude)
@@ -258,7 +288,16 @@ main() {
 
     require_docker
     ensure_dirs
-    load_env
+    if [[ "$SUBCOMMAND" == "comfyui" ]]; then
+        if [[ -f "$SENITY_ENV_FILE" ]]; then
+            # shellcheck disable=SC1090
+            source "$SENITY_ENV_FILE"
+        fi
+        SENITY_CHAT_PROXY_URL="${SENITY_CHAT_PROXY_URL:-$DEFAULT_PROXY_URL}"
+        SENITY_CHAT_PROXY_KEY="${SENITY_CHAT_PROXY_KEY:-}"
+    else
+        load_env
+    fi
 
     if [[ "$SKIP_UPDATE" -eq 0 ]]; then
         do_update

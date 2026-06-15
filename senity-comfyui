@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+COMFYUI_ROOT="${COMFYUI_ROOT:-/opt/comfyui/ComfyUI}"
+COMFYUI_VENV="${COMFYUI_VENV:-/opt/comfyui/venv}"
+COMFYUI_HOME="${SENITY_COMFYUI_HOME:-/workspace/.comfyui}"
+MODELS_DIR="${SENITY_COMFYUI_MODELS_DIR:-${COMFYUI_HOME}/models}"
+INPUT_DIR="${SENITY_COMFYUI_INPUT_DIR:-${COMFYUI_HOME}/input}"
+OUTPUT_DIR="${SENITY_COMFYUI_OUTPUT_DIR:-${COMFYUI_HOME}/output}"
+USER_DIR="${SENITY_COMFYUI_USER_DIR:-${COMFYUI_HOME}/user}"
+TEMP_DIR="${SENITY_COMFYUI_TEMP_DIR:-${COMFYUI_HOME}/temp}"
+CUSTOM_NODES_DIR="${SENITY_COMFYUI_CUSTOM_NODES_DIR:-${COMFYUI_HOME}/custom_nodes}"
+EXTRA_MODEL_PATHS="${SENITY_COMFYUI_EXTRA_MODEL_PATHS:-${COMFYUI_HOME}/extra_model_paths.yaml}"
+LISTEN_ADDR="${SENITY_COMFYUI_LISTEN:-0.0.0.0}"
+CONTAINER_PORT="${SENITY_COMFYUI_PORT:-8188}"
+HOST_PORT="${SENITY_COMFYUI_HOST_PORT:-${CONTAINER_PORT}}"
+
+if [[ ! -x "${COMFYUI_VENV}/bin/python" ]]; then
+    echo "[comfyui] Python venv nicht gefunden: ${COMFYUI_VENV}" >&2
+    exit 127
+fi
+if [[ ! -f "${COMFYUI_ROOT}/main.py" ]]; then
+    echo "[comfyui] ComfyUI main.py nicht gefunden: ${COMFYUI_ROOT}/main.py" >&2
+    exit 127
+fi
+
+mkdir -p \
+    "${MODELS_DIR}/checkpoints" \
+    "${MODELS_DIR}/clip" \
+    "${MODELS_DIR}/clip_vision" \
+    "${MODELS_DIR}/configs" \
+    "${MODELS_DIR}/controlnet" \
+    "${MODELS_DIR}/diffusion_models" \
+    "${MODELS_DIR}/embeddings" \
+    "${MODELS_DIR}/loras" \
+    "${MODELS_DIR}/unet" \
+    "${MODELS_DIR}/upscale_models" \
+    "${MODELS_DIR}/vae" \
+    "${INPUT_DIR}" \
+    "${OUTPUT_DIR}" \
+    "${USER_DIR}" \
+    "${TEMP_DIR}" \
+    "${CUSTOM_NODES_DIR}"
+
+if [[ ! -f "${EXTRA_MODEL_PATHS}" ]]; then
+    cat > "${EXTRA_MODEL_PATHS}" <<EOF
+senity:
+  base_path: ${COMFYUI_HOME}
+  is_default: true
+  checkpoints: models/checkpoints
+  clip: models/clip
+  clip_vision: models/clip_vision
+  configs: models/configs
+  controlnet: models/controlnet
+  diffusion_models: |
+    models/diffusion_models
+    models/unet
+  embeddings: models/embeddings
+  loras: models/loras
+  upscale_models: models/upscale_models
+  vae: models/vae
+  custom_nodes: custom_nodes
+EOF
+fi
+
+echo "[comfyui] Datenverzeichnis : ${COMFYUI_HOME}"
+echo "[comfyui] Modelle          : ${MODELS_DIR}"
+echo "[comfyui] URL              : http://127.0.0.1:${HOST_PORT}"
+echo "[comfyui] Zusatzargumente  : $*"
+
+cd "${COMFYUI_ROOT}"
+export PYTHONUNBUFFERED=1
+
+DEVICE_ARGS=()
+EXPLICIT_DEVICE=false
+DB_ARGS=()
+EXPLICIT_DATABASE=false
+for arg in "$@"; do
+    case "${arg}" in
+        --cpu|--cuda-device|--cuda-device=*|--default-device|--default-device=*|--directml|--directml=*|--oneapi-device-selector|--oneapi-device-selector=*)
+            EXPLICIT_DEVICE=true
+            ;;
+        --database-url|--database-url=*)
+            EXPLICIT_DATABASE=true
+            ;;
+    esac
+done
+
+if [[ "${EXPLICIT_DEVICE}" == false ]]; then
+    if ! "${COMFYUI_VENV}/bin/python" - <<'PY' >/dev/null 2>&1
+import torch
+raise SystemExit(0 if torch.cuda.is_available() else 1)
+PY
+    then
+        DEVICE_ARGS=(--cpu)
+        echo "[comfyui] CUDA nicht verfuegbar, starte mit --cpu"
+    fi
+fi
+if [[ "${EXPLICIT_DATABASE}" == false ]]; then
+    DB_ARGS=(--database-url "sqlite:///${USER_DIR}/comfyui.db")
+fi
+
+exec "${COMFYUI_VENV}/bin/python" "${COMFYUI_ROOT}/main.py" \
+    --listen "${LISTEN_ADDR}" \
+    --port "${CONTAINER_PORT}" \
+    --disable-auto-launch \
+    --extra-model-paths-config "${EXTRA_MODEL_PATHS}" \
+    --input-directory "${INPUT_DIR}" \
+    --output-directory "${OUTPUT_DIR}" \
+    --user-directory "${USER_DIR}" \
+    --temp-directory "${TEMP_DIR}" \
+    --log-stdout \
+    "${DB_ARGS[@]}" \
+    "${DEVICE_ARGS[@]}" \
+    "$@"

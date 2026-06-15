@@ -4,8 +4,9 @@ FROM node:22-bookworm-slim
 # poppler-utils liefert pdftotext/pdftoppm/pdfimages (vom pdf-Skill genutzt),
 # python3-pip wird fuer die PDF-Python-Libs gebraucht (#862).
 RUN apt-get update && apt-get install -y \
-    git openssh-client curl jq python3 python3-pip \
+    git openssh-client curl jq python3 python3-pip python3-venv python3-dev \
     poppler-utils \
+    ffmpeg libgl1 libglib2.0-0 \
     build-essential make g++ \
     libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
     libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libgbm1 \
@@ -19,6 +20,18 @@ RUN apt-get update && apt-get install -y \
 # (poppler-utils) auf.
 RUN pip3 install --no-cache-dir --break-system-packages \
     pypdf pdfplumber pdf2image Pillow
+
+# ComfyUI fuer lokale Bildgenerierung. Eigenes venv, damit die ML-Abhaengigkeiten
+# nicht mit den System-/Skill-Python-Paketen kollidieren. Default ist CPU-PyTorch
+# fuer breite Plattform-Kompatibilitaet; NVIDIA-Nutzer koennen beim Rebuild z.B.
+# COMFYUI_TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130 setzen.
+ARG COMFYUI_TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+RUN python3 -m venv /opt/comfyui/venv \
+    && /opt/comfyui/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && /opt/comfyui/venv/bin/pip install --no-cache-dir torch torchvision torchaudio --index-url "${COMFYUI_TORCH_INDEX_URL}" \
+    && git clone --depth 1 https://github.com/Comfy-Org/ComfyUI.git /opt/comfyui/ComfyUI \
+    && /opt/comfyui/venv/bin/pip install --no-cache-dir -r /opt/comfyui/ComfyUI/requirements.txt \
+    && chown -R node:node /opt/comfyui
 
 # Claude Code CLI installieren
 RUN npm install -g @anthropic-ai/claude-code
@@ -52,6 +65,10 @@ RUN SENITY_THEME_FILE=/etc/senity-theme.conf node /tmp/patch-claude-header.js \
 COPY senity-sync-models.js /usr/local/bin/senity-sync-models
 RUN sed -i 's/\r$//' /usr/local/bin/senity-sync-models \
     && chmod +x /usr/local/bin/senity-sync-models
+
+COPY senity-comfyui /usr/local/bin/senity-comfyui
+RUN sed -i 's/\r$//' /usr/local/bin/senity-comfyui \
+    && chmod +x /usr/local/bin/senity-comfyui
 
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN sed -i 's/\r$//' /docker-entrypoint.sh
