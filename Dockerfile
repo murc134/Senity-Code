@@ -49,6 +49,10 @@ COPY patch-claude-header.js /tmp/patch-claude-header.js
 RUN SENITY_THEME_FILE=/etc/senity-theme.conf node /tmp/patch-claude-header.js \
     && rm /tmp/patch-claude-header.js
 
+COPY senity-sync-models.js /usr/local/bin/senity-sync-models
+RUN sed -i 's/\r$//' /usr/local/bin/senity-sync-models \
+    && chmod +x /usr/local/bin/senity-sync-models
+
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN sed -i 's/\r$//' /docker-entrypoint.sh
 COPY senity-mascot-filter.py /usr/local/bin/senity-mascot-filter

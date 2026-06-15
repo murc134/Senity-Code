@@ -100,6 +100,14 @@ if command -v jq >/dev/null 2>&1; then
     fi
 fi
 
+# ── Senity-/Anthropic-Modelle fuer /model synchronisieren ──
+# Claude Code liest additionalModelOptionsCache aus ~/.claude.json fuer die
+# Model-Picker-Liste. Der Sync ist best-effort: ein API-/Netzwerkfehler darf
+# den Workspace-Start nicht blockieren.
+if command -v senity-sync-models >/dev/null 2>&1; then
+    senity-sync-models || true
+fi
+
 # ── Senity Theme laden (zentrale Farb-Konfiguration) ──
 # Defaults, falls Theme-File fehlt
 PRIMARY_256=99

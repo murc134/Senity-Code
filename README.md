@@ -53,7 +53,17 @@ Modell ueberschreiben:
 .\claude-senity.bat --model qwen3.6:35b
 ```
 
-Hinweis: Der Senity Chat Proxy routet alle Modell-Strings intern uebers MSH-Gateway (`qwen3.6@coder-agent`). Der `--model`-Wert beeinflusst nur die Anzeige im Claude-Code-Header.
+Beim Containerstart synchronisiert Senity Code die verfuegbaren Modelle ueber
+`GET $SENITY_CHAT_PROXY_URL/v1/models` in Claudes `/model`-Picker. Claude-Modelle
+werden mit dem Prefix `Anthropic` einsortiert, alle weiteren Proxy-Modelle mit
+dem Prefix `Senity`.
+
+Optionale Schalter:
+
+```bash
+SENITY_MODEL_SYNC=0                 # Model-Sync deaktivieren
+SENITY_MODEL_SYNC_TIMEOUT_MS=5000   # API-Timeout anpassen
+```
 
 ## Mount-Pfade
 
