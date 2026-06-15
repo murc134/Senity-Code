@@ -325,7 +325,7 @@
     <button class="theme-btn" data-theme="light" onclick="loadTheme('light')">Light</button>
   </div>
 
-  <h2 class="ebene">Ebene 1 &mdash; Banner-Akzente (senity-theme.conf)</h2>
+  <h2 class="ebene">Ebene 1 &mdash; Banner- &amp; Link-Akzente (senity-theme.conf)</h2>
   <div id="accent-controls"></div>
 
   <h2 class="ebene">Ebene 2 &mdash; Senity-Theme &middot; 49 ueberschrieben + 21 geerbt (base: dark)</h2>
@@ -664,11 +664,12 @@ const INHERITED_TOKENS = new Set([
 // ueberschriebene Tokens, geerbte werden ausgefiltert).
 const TOKEN_ORDER = Object.keys(SENITY_CLASSIC).filter(t => !INHERITED_TOKENS.has(t));
 
-// Ebene 1: Banner-Akzente aus senity-theme.conf.
+// Ebene 1: Banner-/Link-Akzente aus senity-theme.conf.
 const ACCENTS_DEFAULT = {
   PRIMARY:   { hex: "#875FAF", desc: "Dunkles Senity-Lila (Logo-Body)" },
   SECONDARY: { hex: "#AF87FF", desc: "Helles Senity-Lila (Highlights)" },
   ACCENT:    { hex: "#FF00AF", desc: "Pink-Glow (Brain-Glow)" },
+  LINK:      { hex: "#6A9BCC", desc: "Terminal-Links (Datei, Ordner, Web)" },
 };
 
 // Token-Gruppen fuer die Sidebar
@@ -796,7 +797,7 @@ function makeColorRow(label, hex, onChange) {
 function renderAccentControls() {
   const container = document.getElementById("accent-controls");
   container.innerHTML = "";
-  for (const key of ["PRIMARY", "SECONDARY", "ACCENT"]) {
+  for (const key of ["PRIMARY", "SECONDARY", "ACCENT", "LINK"]) {
     container.appendChild(makeColorRow(key, currentAccents[key].hex, (hex) => {
       currentAccents[key].hex = hex;
       renderPreview();
@@ -841,8 +842,8 @@ function renderPreview() {
 
   document.getElementById("preview").innerHTML = `
 
-  <!-- ASCII-Banner (Ebene 1: senity-theme.conf) -->
-  <div class="section-title">ASCII-Banner &mdash; Ebene 1 (senity-theme.conf)</div>
+  <!-- ASCII-Banner + Terminal-Links (Ebene 1: senity-theme.conf) -->
+  <div class="section-title">ASCII-Banner &amp; Terminal-Links &mdash; Ebene 1 (senity-theme.conf)</div>
   <div class="terminal">
     <div class="terminal-bar" style="background:${barBg}">
       <div class="terminal-dot" style="background:#ff5f57"></div>
@@ -863,7 +864,7 @@ function renderPreview() {
   </div>
 
   <div class="accent-cards">
-    ${["PRIMARY","SECONDARY","ACCENT"].map(k => {
+    ${["PRIMARY","SECONDARY","ACCENT","LINK"].map(k => {
       const m = hexToRgb(A[k].hex).match(/\d+/g).map(Number);
       const lum = 0.299*m[0]+0.587*m[1]+0.114*m[2];
       return `<div class="accent-card" style="background:${A[k].hex};color:${lum>140?'#000':'#fff'}">
@@ -871,6 +872,16 @@ function renderPreview() {
         <div class="acc-meta">${A[k].hex.toUpperCase()} &middot; ansi-${rgbTo256(...m)}</div>
       </div>`;
     }).join("")}
+  </div>
+
+  <div class="terminal">
+    <div class="terminal-body" style="background:${bg}">
+      <div class="term-line" style="color:${c('inactive')}">  Linkifier-Ausgabe ausserhalb der TUI:</div>
+      <div class="term-line" style="color:${c('text')}">  Datei : <span style="color:${A.LINK.hex};text-decoration:underline;text-underline-offset:2px;">/workspace/projects/app/src/main.ts:42</span></div>
+      <div class="term-line" style="color:${c('text')}">  Ordner: <span style="color:${A.LINK.hex};text-decoration:underline;text-underline-offset:2px;">/workspace/projects/app/</span></div>
+      <div class="term-line" style="color:${c('text')}">  Web   : <span style="color:${A.LINK.hex};text-decoration:underline;text-underline-offset:2px;">https://senity.ai</span></div>
+      <div class="term-line" style="color:${c('subtle')}">  Farbe kommt aus LINK_RGB in senity-theme.conf, nicht aus senity-theme.json.</div>
+    </div>
   </div>
 
   <!-- Welcome Box -->
@@ -1080,10 +1091,24 @@ function generateExport(tab) {
       // Format { base, overrides }. Der Token-Key briefLabelClaude heisst im
       // gepatchten Binary briefLabelSenity (Branding-Patch ersetzt "Claude" ->
       // "Senity"), darum hier umbenennen. Direkt in senity-theme.json pasten.
+      const norm = (v) => (v || "rgb(128,128,128)").replace(/\s/g, "");
       const overrides = {};
+      // 1) Bewusst ueberschriebene Tokens: immer exportieren.
       for (const t of TOKEN_ORDER) {
         const key = t === "briefLabelClaude" ? "briefLabelSenity" : t;
-        overrides[key] = (currentTheme[t] || "rgb(128,128,128)").replace(/\s/g, "");
+        overrides[key] = norm(currentTheme[t]);
+      }
+      // 2) Geerbte Tokens nur dann promoten, wenn ihr aktueller Wert vom
+      //    base: dark-Default abweicht. Sonst wuerde ein vom Nutzer geaenderter
+      //    geerbter Token (z.B. selectionBg) im Export verloren gehen, weil
+      //    base: dark ihn sonst auf den Default zuruecksetzt.
+      for (const t of INHERITED_TOKENS) {
+        const current = norm(currentTheme[t]);
+        const baseDark = norm(DARK[t]);
+        if (current !== baseDark) {
+          const key = t === "briefLabelClaude" ? "briefLabelSenity" : t;
+          overrides[key] = current;
+        }
       }
       return JSON.stringify({ base: "dark", overrides }, null, 2);
     }
@@ -1108,13 +1133,15 @@ function generateExport(tab) {
         "# Wird verwendet von:",
         "#   - patch-claude-header.js   (ersetzt Anthropic-Farben im CLI-Bundle)",
         "#   - docker-entrypoint.sh     (Banner-Farben)",
+        "#   - senity-mascot-filter.py  (Terminal-Link-Farbe)",
         "#",
         "# Aenderungen benoetigen einen Image-Rebuild: ./claude-senity.sh --rebuild",
         "# " + "=".repeat(64),
         "",
         out("PRIMARY", A.PRIMARY.hex, "dunkles Senity-Lila (Haupt-Akzent, Logo-Body)"),
         out("SECONDARY", A.SECONDARY.hex, "helles Senity-Lila (Highlights, Sekundaer-Akzent)"),
-        out("ACCENT", A.ACCENT.hex, "Pink-Glow (Brain-Glow, Akzentpunkte)").trimEnd(),
+        out("ACCENT", A.ACCENT.hex, "Pink-Glow (Brain-Glow, Akzentpunkte)"),
+        out("LINK", A.LINK.hex, "Terminal-Hyperlinks (OSC-8 Datei-/Ordner-/Weblinks)").trimEnd(),
       ].join("\n");
     }
 
@@ -1124,6 +1151,7 @@ function generateExport(tab) {
           PRIMARY: currentAccents.PRIMARY.hex,
           SECONDARY: currentAccents.SECONDARY.hex,
           ACCENT: currentAccents.ACCENT.hex,
+          LINK: currentAccents.LINK.hex,
         },
         theme: currentTheme,
       }, null, 2);
@@ -1133,9 +1161,9 @@ function generateExport(tab) {
         `Senity Theme Export (Basis: ${currentThemeName}, ${new Date().toISOString().slice(0,10)})`,
         "=".repeat(60),
         "",
-        "-- Ebene 1: Banner-Akzente (senity-theme.conf) --",
+        "-- Ebene 1: Banner-/Link-Akzente (senity-theme.conf) --",
       ];
-      for (const k of ["PRIMARY", "SECONDARY", "ACCENT"]) {
+      for (const k of ["PRIMARY", "SECONDARY", "ACCENT", "LINK"]) {
         lines.push(`  ${k.padEnd(12)} ${currentAccents[k].hex.toUpperCase()}`);
       }
       lines.push("", "-- Ebene 2: Senity-Theme (49 ueberschrieben + 21 geerbt, base: dark) --");
