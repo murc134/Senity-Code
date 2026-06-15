@@ -319,7 +319,7 @@
 <div class="sidebar">
   <h2>Theme-Basis laden</h2>
   <div class="theme-selector">
-    <button class="theme-btn" data-theme="senity-fresh" onclick="loadTheme('senity-fresh')">Senity Fresh</button>
+    <button class="theme-btn" data-theme="senity" onclick="loadTheme('senity')">Senity Theme</button>
     <button class="theme-btn" data-theme="senity-classic" onclick="loadTheme('senity-classic')">Senity Classic</button>
     <button class="theme-btn" data-theme="dark" onclick="loadTheme('dark')">Dark</button>
     <button class="theme-btn" data-theme="light" onclick="loadTheme('light')">Light</button>
@@ -456,11 +456,11 @@ const SENITY_CLASSIC = {
   rainbow_violet_shimmer: "rgb(230,180,210)",
 };
 
-// senity-fresh: harmonisierte Variante in der Lila/Pink-Palette der
+// senity: aktives Senity-Theme aus senity-theme.json.
 // Theme-Uebersichtsseite (.claude/skills/senity-theme/theme-preview.html).
-// Pink #FF00AF = claude, Lila #AF87FF = Shimmer/Sekundaer, #875FAF = Borders.
+// Aktuelle Senity-Vorgabe: PRIMARY #5900FF, SECONDARY #9C38FF, ACCENT #FF00AF.
 // Glaettet die harten Klassik-Werte (weisser diffAdded, rosa background, ...).
-const SENITY_FRESH = {
+const SENITY_THEME = {
   claude: "rgb(135,95,175)",
   claudeShimmer: "rgb(175,135,255)",
   briefLabelClaude: "rgb(135,95,175)",
@@ -488,12 +488,12 @@ const SENITY_FRESH = {
   warningShimmer: "rgb(255,140,220)",
   merged: "rgb(175,135,255)",
   autoAccept: "rgb(175,135,255)",
-  diffAdded: "rgb(28,64,44)",
-  diffRemoved: "rgb(74,32,44)",
-  diffAddedDimmed: "rgb(40,52,46)",
-  diffRemovedDimmed: "rgb(58,40,46)",
-  diffAddedWord: "rgb(86,196,118)",
-  diffRemovedWord: "rgb(228,108,130)",
+  diffAdded: "rgb(0,255,30)",
+  diffRemoved: "rgb(255,92,138)",
+  diffAddedDimmed: "rgb(172,32,182)",
+  diffRemovedDimmed: "rgb(50,0,112)",
+  diffAddedWord: "rgb(255,255,255)",
+  diffRemovedWord: "rgb(168,108,228)",
   planMode: "rgb(135,95,175)",
   fastMode: "rgb(255,0,175)",
   fastModeShimmer: "rgb(255,140,220)",
@@ -522,7 +522,7 @@ const SENITY_FRESH = {
   clawd_background: "rgb(0,0,0)",
   userMessageBackground: "rgb(55,55,55)",
   userMessageBackgroundHover: "rgb(70,70,70)",
-  selectionBg: "rgb(38,79,120)",
+  selectionBg: "rgb(120,38,109)",
   bashMessageBackgroundColor: "rgb(65,60,65)",
   memoryBackgroundColor: "rgb(55,65,70)",
   rainbow_red_shimmer: "rgb(250,155,147)",
@@ -640,7 +640,8 @@ const LIGHT = {
 };
 
 const THEMES = {
-  "senity-fresh": SENITY_FRESH,
+  senity: SENITY_THEME,
+  "senity-fresh": SENITY_THEME,
   "senity-classic": SENITY_CLASSIC,
   dark: DARK,
   light: LIGHT,
@@ -666,10 +667,10 @@ const TOKEN_ORDER = Object.keys(SENITY_CLASSIC).filter(t => !INHERITED_TOKENS.ha
 
 // Ebene 1: Banner-/Link-Akzente aus senity-theme.conf.
 const ACCENTS_DEFAULT = {
-  PRIMARY:   { hex: "#875FAF", desc: "Dunkles Senity-Lila (Logo-Body)" },
-  SECONDARY: { hex: "#AF87FF", desc: "Helles Senity-Lila (Highlights)" },
+  PRIMARY:   { hex: "#5900FF", desc: "Dunkles Senity-Lila (Logo-Body)" },
+  SECONDARY: { hex: "#9C38FF", desc: "Helles Senity-Lila (Highlights)" },
   ACCENT:    { hex: "#FF00AF", desc: "Pink-Glow (Brain-Glow)" },
-  LINK:      { hex: "#6A9BCC", desc: "Terminal-Links (Datei, Ordner, Web)" },
+  LINK:      { hex: "#FB00FF", desc: "Terminal-Links (Datei, Ordner, Web)" },
 };
 
 // Token-Gruppen fuer die Sidebar
@@ -713,7 +714,7 @@ const TOKEN_GROUPS = {
 // State
 // ===========================================================
 let currentTheme = {};
-let currentThemeName = "senity-fresh";
+let currentThemeName = "senity";
 let currentAccents = {};
 
 function rgbToHex(rgbStr) {
@@ -1224,7 +1225,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeExpor
 // ===========================================================
 currentAccents = JSON.parse(JSON.stringify(ACCENTS_DEFAULT));
 renderAccentControls();
-loadTheme("senity-fresh");
+loadTheme("senity");
 </script>
 </body>
 </html>

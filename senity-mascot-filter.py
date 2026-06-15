@@ -2,8 +2,8 @@
 # senity-mascot-filter.py
 #
 # PTY-Wrapper, der Claude Code als Kindprozess startet und in den ersten
-# Sekunden der Ausgabe die Mascot-Zeilen der Welcome-Box auf Leerzeichen
-# ersetzt. Nach FILTER_SECONDS wird der Filter deaktiviert, damit normale
+# Sekunden der Ausgabe die Mascot-Zeilen der Welcome-Box bzw. des kompakten
+# Start-Headers durch Senity-Branding ersetzt. Nach FILTER_SECONDS wird der Filter deaktiviert, damit normale
 # TUI-Nutzung (Box-Edges, Cursor, Inhaltsdarstellung) unbeeintraechtigt
 # bleibt.
 #
@@ -35,6 +35,27 @@ import struct
 import termios
 import signal
 import select
+
+def _read_theme_file(path: str) -> dict[str, str]:
+    values = {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                key = key.strip()
+                val = val.strip().split("#", 1)[0].strip()
+                if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+                    val = val[1:-1]
+                values[key] = val
+    except OSError:
+        pass
+    return values
+
+
+THEME_VALUES = _read_theme_file(os.environ.get("SENITY_THEME_FILE", "/etc/senity-theme.conf"))
 
 # ANSI Escape Sequences entfernen, damit unsere Heuristik den realen Text sieht.
 # Wir entfernen die Sequenzen nur fuer die Klassifikation; die Daten gehen
@@ -89,12 +110,44 @@ OSC_TITLE_RE = re.compile(
     rb"(\x1b\]0;[^\x07\x1b]*?)Claude Code([^\x07\x1b]*?(?:\x07|\x1b\\))"
 )
 
+# Kompakter Claude-Code-Header (ohne Box) nutzt links drei Mascot-Zeilen:
+#   " ▐▛███▜▌   Claude Code v..."
+#   "▝▜█████▛▘  <model>"
+#   "  ▘▘ ▝▝    <cwd>"
+# Wir ersetzen nur den linken 11-Zellen-Bereich und behalten den Rest.
+COMPACT_MASCOT_WIDTH = 11
+COMPACT_MASCOT_GLYPHS = set("▐▛█▜▌▝▘")
+COMPACT_SENITY_MASCOT = (
+    " ▐█████▌   ",
+    "▝▜██●██▛▘  ",
+    "  ▘SEN▝▘   ",
+)
+COMPACT_CLAUDE_MASCOT = (
+    " ▐▛███▜▌   ",
+    "▝▜█████▛▘  ",
+    "  ▘▘ ▝▝    ",
+)
+MASCOT_RGB = os.environ.get("SENITY_MASCOT_RGB") or THEME_VALUES.get("PRIMARY_RGB") or "135;95;175"
+if not re.match(r"^\d{1,3};\d{1,3};\d{1,3}$", MASCOT_RGB):
+    MASCOT_RGB = "135;95;175"
+SENITY_MASCOT_COLOR = os.environ.get("SENITY_MASCOT_COLOR", f"\x1b[38;2;{MASCOT_RGB}m")
+SENITY_MASCOT_RESET = "\x1b[0m"
+
 # Terminal-Hyperlinks: OSC 8. Der Filter laeuft im Container, das Terminal
 # sitzt aber auf dem Host. Deshalb bekommt er vom Launcher eine Mapping-Liste
 # Containerpfad -> Hostpfad und verlinkt sichtbare URLs/Dateipfade.
 LINKIFY_ENABLED = os.environ.get("SENITY_LINKIFY", "1").lower() not in (
     "0", "false", "no", "off"
 )
+LINK_RGB = os.environ.get("SENITY_LINK_RGB") or THEME_VALUES.get("LINK_RGB") or "106;155;204"
+LINK_COLOR_ENABLED = os.environ.get("SENITY_LINK_COLOR", "1").lower() not in (
+    "0", "false", "no", "off"
+)
+LINK_COLOR_RE = re.compile(r"^\d{1,3};\d{1,3};\d{1,3}$")
+if not LINK_COLOR_RE.match(LINK_RGB):
+    LINK_RGB = "106;155;204"
+LINK_FG = f"\x1b[38;2;{LINK_RGB}m".encode("ascii") if LINK_COLOR_ENABLED else b""
+LINK_FG_RESET = b"\x1b[39m" if LINK_COLOR_ENABLED else b""
 OSC8_MARKER = b"\x1b]8;"
 TERMINAL_ESCAPE_RE = re.compile(
     rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|"
@@ -454,6 +507,8 @@ def _trim_trailing(raw: bytes):
 def _osc8(uri: str, label: bytes) -> bytes:
     uri_bytes = uri.encode("ascii", "ignore")
     link_id = hashlib.sha256(uri_bytes).hexdigest()[:16].encode("ascii")
+    if LINK_FG and b"\x1b" not in label:
+        label = LINK_FG + label + LINK_FG_RESET
     return b"\x1b]8;id=senity-" + link_id + b";" + uri_bytes + b"\x1b\\" + label + b"\x1b]8;;\x1b\\"
 
 
@@ -620,12 +675,21 @@ def rewrite_titles_in_chunk(chunk: bytes) -> bytes:
         chunk = OSC_TITLE_RE.sub(
             lambda m: m.group(1) + SENITY_CODE + m.group(2), chunk
         )
+    if COMPACT_CLAUDE_MASCOT[0].encode("utf-8") in chunk:
+        for old, new in zip(COMPACT_CLAUDE_MASCOT, COMPACT_SENITY_MASCOT):
+            chunk = chunk.replace(
+                old.encode("utf-8"),
+                f"{SENITY_MASCOT_COLOR}{new}{SENITY_MASCOT_RESET}".encode("utf-8"),
+                1,
+            )
+        chunk = chunk.replace(CLAUDE_CODE, SENITY_CODE, 1)
     return chunk
 
 _state = {
     "start": None,
     "off": False,
     "buf": b"",  # Zeilen-Buffer
+    "compact_mascot_next": None,
 }
 
 
@@ -691,6 +755,50 @@ def try_rewrite_title(raw_line: bytes):
     return head + new_inner.encode("utf-8") + tail
 
 
+def _split_line_ending(raw_line: bytes):
+    for ending in (b"\r\n", b"\n", b"\r"):
+        if raw_line.endswith(ending):
+            return raw_line[:-len(ending)], ending
+    return raw_line, b""
+
+
+def _looks_like_compact_mascot_prefix(plain: str) -> bool:
+    prefix = plain[:COMPACT_MASCOT_WIDTH + 3]
+    return any(ch in COMPACT_MASCOT_GLYPHS for ch in prefix)
+
+
+def try_rewrite_compact_mascot(raw_line: bytes):
+    """
+    Ersetzt den kompakten dreizeiligen Claude-Mascot-Header links durch ein
+    kleines Senity-Mascot. Der restliche Text (Version, Modell, Pfad) bleibt.
+    """
+    body, ending = _split_line_ending(raw_line)
+    if not body:
+        return None
+    plain = strip_ansi(body).decode("utf-8", "replace")
+
+    line_idx = None
+    if "Claude Code v" in plain and _looks_like_compact_mascot_prefix(plain):
+        line_idx = 0
+        _state["compact_mascot_next"] = 1
+    elif _state.get("compact_mascot_next") in (1, 2):
+        next_idx = _state["compact_mascot_next"]
+        if not _looks_like_compact_mascot_prefix(plain):
+            _state["compact_mascot_next"] = None
+            return None
+        line_idx = next_idx
+        _state["compact_mascot_next"] = next_idx + 1 if next_idx < 2 else None
+    else:
+        return None
+
+    rest = plain[COMPACT_MASCOT_WIDTH:] if len(plain) >= COMPACT_MASCOT_WIDTH else ""
+    if line_idx == 0:
+        rest = rest.replace("Claude Code", NEW_PRODUCT, 1)
+    prefix = COMPACT_SENITY_MASCOT[line_idx]
+    rendered = f"{SENITY_MASCOT_COLOR}{prefix}{SENITY_MASCOT_RESET}{rest}"
+    return rendered.encode("utf-8") + ending
+
+
 def filter_line(raw_line: bytes) -> bytes:
     """
     Akzeptiert eine vollstaendige Zeile inklusive ANSI-Sequenzen.
@@ -698,6 +806,9 @@ def filter_line(raw_line: bytes) -> bytes:
     Content zwischen den ersten und letzten Box-V-Edges durch Spaces.
     Sonst Zeile unveraendert zurueck.
     """
+    rewritten = try_rewrite_compact_mascot(raw_line)
+    if rewritten is not None:
+        return rewritten
     rewritten = try_rewrite_title(raw_line)
     if rewritten is not None:
         return rewritten
