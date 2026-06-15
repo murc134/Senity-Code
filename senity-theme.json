@@ -49,6 +49,7 @@
     "rainbow_green": "rgb(145,200,130)",
     "rainbow_blue": "rgb(130,170,220)",
     "rainbow_indigo": "rgb(155,130,200)",
-    "rainbow_violet": "rgb(200,130,180)"
+    "rainbow_violet": "rgb(200,130,180)",
+    "selectionBg": "rgb(120,38,109)"
   }
 }
