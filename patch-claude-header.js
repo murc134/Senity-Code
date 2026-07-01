@@ -14,14 +14,16 @@
 // wie das Original (sonst zerschiesst es Offset-Tabellen). Text-Replacements
 // werden automatisch mit Spaces auf Originallaenge gepaddet bzw. abgeschnitten.
 //
-// Laeuft einmalig im Docker-Build. Idempotent.
+// Laeuft im Docker-Build (Offline-Fallback-Branding der Image-Version) UND
+// im Entrypoint nach jedem Startzeit-Update von Claude Code (#2428).
+// Idempotent: bereits ersetzte Strings matchen nicht erneut.
 // ════════════════════════════════════════════════════════════════
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
 // ─── Theme laden ────────────────────────────────────────────────
-const themePath = process.env.SENITY_THEME_FILE || '/tmp/senity-theme.conf';
+const themePath = process.env.SENITY_THEME_FILE || '/etc/senity-theme.conf';
 const theme = {
     PRIMARY_256:   '99',
     PRIMARY_HEX:   '#875FAF',
@@ -67,9 +69,9 @@ const textReplacements = [
     ['API Usage Billing',          'Senity Chat Proxy'],
     ['Welcome back!',              'Willkommen!'],     // 13B -> 11B + 2 Spaces padding
     ["What's new",                 'Neuheiten'],       // 10B -> 9B + 1 Space padding
-    // Version-Konstante: "2.1.143" (7B) -> "1.0    " (7B mit Trailing-Spaces).
-    // dimColor im Welcome-Box rendert Trailing-Spaces unsichtbar.
-    ['VERSION:"2.1.143"',          'VERSION:"1.0    "'], // 17B -> 17B
+    // Version-Konstante wird weiter unten DYNAMISCH ergaenzt (aus der
+    // installierten package.json), damit der Patch versions-agnostisch ist
+    // und beim Startzeit-Update jede Claude-Code-Version brandet (#2428).
     // ─ Generisches Branding-Rewrite ─
     // Jedes exakte "Claude" -> "Senity" (auch "Claude Code" -> "Senity Code",
     // Welcome-Box-Titel, System-Prompt, Hilfe-/Abrechnungstexte).
@@ -202,7 +204,7 @@ const colorReplacements = [
 // an unterschiedlichen Byte-Laengen (z.B. warning rgb(255,193,7) -> rgb(255,90,200)).
 //
 // Die Ebene-2-Farb-Token liefert daher das native Custom-Theme-Feature:
-// senity-theme.json -> ~/.claude/themes/senity.json, aktiviert per
+// senity-theme.json -> ~/.claude/themes/senity.json, als Default gesetzt per
 // activeCustomTheme="custom:senity" (siehe docker-entrypoint.sh). Update-fest,
 // keine Abhaengigkeit von minifizierten Symbolen, keine Laengen-Limits.
 //
@@ -224,6 +226,28 @@ const pkgDir = path.join(root, '@anthropic-ai', 'claude-code');
 if (!fs.existsSync(pkgDir)) {
     console.error('[patch] claude-code Package nicht gefunden unter', pkgDir);
     process.exit(1);
+}
+
+// ─── Version-Rewrite dynamisch aufbauen (versions-agnostisch, #2428) ─
+// 'VERSION:"<installierte Version>"' -> 'VERSION:"1.0<Spaces>"', exakt
+// laengenerhaltend (binary-safe). dimColor in der Welcome-Box rendert die
+// Trailing-Spaces unsichtbar. Die Version kommt aus der package.json des
+// installierten Pakets, nicht aus einer hartkodierten Konstante — so patcht
+// das Startzeit-Update jede kuenftige Claude-Code-Version.
+try {
+    const pkgVersion = JSON.parse(
+        fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8')).version;
+    const verFrom = `VERSION:"${pkgVersion}"`;
+    const padLen = Buffer.byteLength(verFrom, 'utf8')
+        - Buffer.byteLength('VERSION:"1.0"', 'utf8');
+    if (padLen >= 0) {
+        textReplacements.unshift([verFrom, `VERSION:"1.0${' '.repeat(padLen)}"`]);
+        console.log(`[patch] Version-Rewrite aktiv: ${verFrom} -> VERSION:"1.0..."`);
+    } else {
+        console.warn(`[patch] SKIP Version-Rewrite: "${pkgVersion}" kuerzer als Ersatz "1.0"`);
+    }
+} catch (e) {
+    console.warn('[patch] SKIP Version-Rewrite: package.json nicht lesbar:', e.message);
 }
 
 // ─── File-Sammlung ──────────────────────────────────────────────
@@ -366,4 +390,4 @@ if (totalText === 0 && totalColor === 0) {
     console.warn('[patch] WARN: keine Treffer. CLI evtl. veraendert (Update?).');
 }
 console.log('[patch] Ebene-2-Farb-Token kommen vom nativen Custom-Theme '
-    + '(senity-theme.json, aktiviert via entrypoint).');
+    + '(senity-theme.json, Default via entrypoint).');

@@ -3,6 +3,86 @@ set -euo pipefail
 
 # ── Senity Workspace Container Entry Point ──
 
+SENITY_AGENT_MODE="${SENITY_AGENT_MODE:-senity}"
+case "$SENITY_AGENT_MODE" in
+    senity|claude|codex|antigravity|comfyui) ;;
+    *) SENITY_AGENT_MODE="senity" ;;
+esac
+SENITY_BRANDED_MODE=0
+if [[ "$SENITY_AGENT_MODE" == "senity" ]]; then
+    SENITY_BRANDED_MODE=1
+fi
+
+# ── Claude Code Startzeit-Update (Ticket #2428) ──
+# Claude Code wird bei jedem Container-Start auf die neueste npm-Version
+# gebracht (Update-Zeitpunkt laut Vorgabe: Container-Start, nicht Laufzeit,
+# nicht nur Image-Build; in der Session ist der Autoupdater via
+# DISABLE_AUTOUPDATER=1 aus). Der npm-Prefix /opt/senity/npm gehoert dem
+# node-User und liegt via PATH vor /usr/local/bin. Offline oder npm-Fehler
+# => Warnung + Fallback auf die vorhandene Version, der Start bricht nie ab.
+# npm-Cache liegt unter HOME=/workspace (~/.npm) und persistiert damit
+# ueber den Workspace-Mount. Opt-out: SENITY_CLAUDE_UPDATE=0.
+SENITY_NPM_PREFIX="${SENITY_NPM_PREFIX:-/opt/senity/npm}"
+CLAUDE_PKG_DIR="${SENITY_NPM_PREFIX}/lib/node_modules/@anthropic-ai/claude-code"
+CLAUDE_UPSTREAM_DIR="/opt/senity/claude-upstream"
+SENITY_PATCH_SCRIPT="/usr/local/lib/senity/patch-claude-header.js"
+SENITY_PATCH_MARKER="/opt/senity/.senity-patched-version"
+
+claude_pkg_version() {
+    node -p "require('$1/package.json').version" 2>/dev/null || true
+}
+
+if [[ "$SENITY_AGENT_MODE" == "senity" || "$SENITY_AGENT_MODE" == "claude" ]] \
+   && [[ "${SENITY_CLAUDE_UPDATE:-1}" != "0" ]] && command -v npm >/dev/null 2>&1; then
+    current_ver="$(claude_pkg_version "$CLAUDE_PKG_DIR")"
+    latest_ver="$(timeout 15 npm view @anthropic-ai/claude-code version 2>/dev/null || true)"
+    if [[ -z "$latest_ver" ]]; then
+        echo "[senity] WARN: npm-Registry nicht erreichbar, Claude Code bleibt auf ${current_ver:-Image-Version}." >&2
+    elif [[ "$latest_ver" != "$current_ver" ]]; then
+        echo "[senity] Claude Code Update: ${current_ver:-unbekannt} -> ${latest_ver} ..."
+        if NPM_CONFIG_PREFIX="$SENITY_NPM_PREFIX" timeout 300 npm install -g --no-audit --no-fund \
+              "@anthropic-ai/claude-code@${latest_ver}" >/dev/null 2>&1; then
+            echo "[senity] Claude Code ${latest_ver} installiert."
+        else
+            echo "[senity] WARN: Update fehlgeschlagen, Claude Code bleibt auf ${current_ver:-Image-Version}." >&2
+        fi
+    fi
+
+    # Unveraenderte Upstream-Kopie synchron halten (Wrapper claude-upstream).
+    # WICHTIG: muss VOR dem Branding-Patch laufen, damit die Kopie immer die
+    # ungepatchte Fassung der installierten Version enthaelt.
+    installed_ver="$(claude_pkg_version "$CLAUDE_PKG_DIR")"
+    upstream_ver="$(claude_pkg_version "$CLAUDE_UPSTREAM_DIR")"
+    if [[ -n "$installed_ver" && "$installed_ver" != "$upstream_ver" && -d "$CLAUDE_PKG_DIR" ]]; then
+        tmp_upstream="${CLAUDE_UPSTREAM_DIR}.new"
+        rm -rf "$tmp_upstream"
+        if cp -R "$CLAUDE_PKG_DIR" "$tmp_upstream" 2>/dev/null; then
+            rm -rf "$CLAUDE_UPSTREAM_DIR"
+            mv "$tmp_upstream" "$CLAUDE_UPSTREAM_DIR"
+        else
+            rm -rf "$tmp_upstream"
+            echo "[senity] WARN: claude-upstream-Kopie konnte nicht aktualisiert werden." >&2
+        fi
+    fi
+
+    # Branding-Patch (nur Senity-Modus): nach jedem Versionswechsel erneut
+    # anwenden. Der Marker haelt die zuletzt gepatchte Version fest, damit
+    # ein Update im claude-Modus beim naechsten senity-Start nachgepatcht
+    # wird und unveraenderte Versionen nicht erneut gescannt werden.
+    if [[ "$SENITY_BRANDED_MODE" == "1" && -f "$SENITY_PATCH_SCRIPT" && -n "$installed_ver" ]]; then
+        patched_ver="$(cat "$SENITY_PATCH_MARKER" 2>/dev/null || true)"
+        if [[ "$installed_ver" != "$patched_ver" ]]; then
+            if NPM_CONFIG_PREFIX="$SENITY_NPM_PREFIX" \
+                  SENITY_THEME_FILE="${SENITY_THEME_FILE:-/etc/senity-theme.conf}" \
+                  node "$SENITY_PATCH_SCRIPT"; then
+                printf '%s\n' "$installed_ver" > "$SENITY_PATCH_MARKER" 2>/dev/null || true
+            else
+                echo "[senity] WARN: Branding-Patch fehlgeschlagen, Claude laeuft ungebrandet weiter." >&2
+            fi
+        fi
+    fi
+fi
+
 # Config-Directory existenz pruefen — HOME=/workspace, daher /workspace/.claude
 if [[ ! -d "${HOME}/.claude" ]]; then
     mkdir -p "${HOME}/.claude" 2>/dev/null || true
@@ -25,32 +105,66 @@ fi
 # Aenderungen am Theme laufen ueber die Repo-Datei + Image-Rebuild.
 THEME_JSON_SRC="${SENITY_THEME_JSON:-/etc/senity-theme.json}"
 THEME_JSON_DST="${HOME}/.claude/themes/senity.json"
+THEME_DEFAULT_MARKER="${HOME}/.claude/.senity-theme-default-applied"
 if [[ -f "$THEME_JSON_SRC" ]]; then
     mkdir -p "${HOME}/.claude/themes" 2>/dev/null || true
     cat "$THEME_JSON_SRC" > "$THEME_JSON_DST" 2>/dev/null || true
 fi
 
-# Onboarding abschliessen, Basis-Theme auf ein gueltiges Built-in ("dark")
-# setzen und das Senity-Custom-Theme via activeCustomTheme aktivieren. "dark"
-# dient als Fallback-Basis, falls das Custom-Theme einmal nicht laedt — die
-# fruehere .theme = "senity"-Variante war wirkungslos, weil das Binary kein
-# Theme namens "senity" kennt (siehe patch-claude-header.js, Branding-only).
+# Onboarding abschliessen und Senity als Default-Theme setzen. Das Built-in
+# .theme bleibt "dark", weil Claude Code Custom-Themes ueber activeCustomTheme
+# laedt; "dark" dient nur als gueltige Fallback-Basis. Nach dem ersten Setzen
+# verhindert der Marker, dass spaetere Nutzer-Themewechsel ueberschrieben werden.
 CLAUDE_JSON="${HOME}/.claude.json"
 if command -v jq >/dev/null 2>&1; then
+    apply_senity_theme_default=0
+    if [[ "$SENITY_BRANDED_MODE" == "1" && "${SENITY_THEME_DEFAULT:-1}" != "0" && ( ! -f "$CLAUDE_JSON" || ! -f "$THEME_DEFAULT_MARKER" ) ]]; then
+        apply_senity_theme_default=1
+    fi
+
     if [[ -f "$CLAUDE_JSON" ]]; then
         tmp_json="$(mktemp)"
-        if jq '.hasCompletedOnboarding = true
-               | .theme = "dark"
-               | .activeCustomTheme = "custom:senity"
-               | if has("customApiKeyResponses")
+        config_filter='.'
+        if [[ "$SENITY_BRANDED_MODE" == "1" ]]; then
+            theme_filter='
+               | if ((.theme // "") == "" or .theme == "senity")
+                 then .theme = "dark"
+                 else .
+                 end'
+            if [[ "$apply_senity_theme_default" == "1" ]]; then
+                theme_filter='
+               | if ((.activeCustomTheme // "") == "" and ((.theme // "") == "" or .theme == "dark" or .theme == "senity"))
+                 then .theme = "dark" | .activeCustomTheme = "custom:senity"
+                 else
+                   if ((.theme // "") == "" or .theme == "senity")
+                   then .theme = "dark"
+                   else .
+                   end
+                 end'
+            fi
+            config_filter=".hasCompletedOnboarding = true
+               ${theme_filter}
+               | if has(\"customApiKeyResponses\")
                  then .customApiKeyResponses.rejected = []
-                 else . end' \
+                 else . end"
+        fi
+        if jq "$config_filter" \
               "$CLAUDE_JSON" > "$tmp_json" 2>/dev/null; then
             cat "$tmp_json" > "$CLAUDE_JSON"
+            if [[ "$SENITY_BRANDED_MODE" == "1" ]]; then
+                mkdir -p "$(dirname "$THEME_DEFAULT_MARKER")" 2>/dev/null || true
+                touch "$THEME_DEFAULT_MARKER" 2>/dev/null || true
+            fi
         fi
         rm -f "$tmp_json"
     else
-        printf '{"hasCompletedOnboarding":true,"theme":"dark","activeCustomTheme":"custom:senity"}\n' > "$CLAUDE_JSON"
+        if [[ "$SENITY_BRANDED_MODE" == "1" ]]; then
+            printf '{"hasCompletedOnboarding":true,"theme":"dark","activeCustomTheme":"custom:senity"}\n' > "$CLAUDE_JSON"
+            mkdir -p "$(dirname "$THEME_DEFAULT_MARKER")" 2>/dev/null || true
+            touch "$THEME_DEFAULT_MARKER" 2>/dev/null || true
+        else
+            printf '{}\n' > "$CLAUDE_JSON"
+        fi
     fi
 
     # ── MCP node_modules sicherstellen ──
@@ -104,7 +218,7 @@ fi
 # Claude Code liest additionalModelOptionsCache aus ~/.claude.json fuer die
 # Model-Picker-Liste. Der Sync ist best-effort: ein API-/Netzwerkfehler darf
 # den Workspace-Start nicht blockieren.
-if command -v senity-sync-models >/dev/null 2>&1; then
+if [[ "$SENITY_BRANDED_MODE" == "1" ]] && command -v senity-sync-models >/dev/null 2>&1; then
     senity-sync-models || true
 fi
 
@@ -122,7 +236,7 @@ fi
 # ── Senity Banner ──
 # Senity Brain-Logo: Brain (= + ~ glow), Dot-Cluster (l/I/t/;/,/!/+) und SENITY-Block (@).
 # Skip wenn kein TTY oder SENITY_NO_BANNER gesetzt.
-if [[ -t 1 && -z "${SENITY_NO_BANNER:-}" ]]; then
+if [[ "$SENITY_BRANDED_MODE" == "1" && -t 1 && -z "${SENITY_NO_BANNER:-}" ]]; then
     ESC=$'\033'
 
     # Senity Wordmark in Unicode-Block-Schrift mit vertikalem Lila->Pink-Verlauf:
