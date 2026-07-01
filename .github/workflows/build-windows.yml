@@ -1,0 +1,63 @@
+name: Build Windows Installer (tag-getriggert)
+
+# Quelle der Wahrheit bleibt Gitea (git.senity.ai). Dieses Repo ist ein
+# Push-Mirror-Ziel; ein Tag "setup-v<version>" triggert hier den Build von
+# senity-setup.exe via Inno Setup und haengt das Ergebnis an ein GitHub-
+# Release. Analog zum Pattern in senity-speech-flow/.github/workflows/build-windows.yml.
+
+on:
+  push:
+    tags:
+      - 'setup-v*'          # z.B. setup-v1.2.0
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versionsnummer ohne v (z.B. 1.2.0)'
+        required: true
+
+permissions:
+  contents: write           # Release anlegen + Asset hochladen
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version aus Tag bzw. Input ableiten
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $v = "$env:GITHUB_REF_NAME" -replace '^setup-v',''
+          } else {
+            $v = "${{ github.event.inputs.version }}"
+          }
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "Ungueltige Version: '$v'" }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Installer-Version: $v"
+
+      - name: Inno Setup installieren
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Installer bauen
+        shell: pwsh
+        working-directory: senity-cli/installer
+        run: .\build.ps1 -Version "${{ steps.ver.outputs.version }}"
+
+      - name: Als Build-Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: senity-setup-v${{ steps.ver.outputs.version }}
+          path: senity-cli/installer/dist/senity-setup.exe
+          retention-days: 30
+
+      - name: An GitHub-Release haengen (nur bei Tag)
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: senity-cli/installer/dist/senity-setup.exe
+          name: Senity CLI Setup v${{ steps.ver.outputs.version }}
+          body: |
+            Automatischer Windows-Installer-Build aus Tag `${{ github.ref_name }}`.

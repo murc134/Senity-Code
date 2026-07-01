@@ -1,5 +1,10 @@
 name: Build and publish senity-code image
 
+# Quelle der Wahrheit bleibt Gitea (git.senity.ai). Dieses Repo ist ein
+# Push-Mirror-Ziel; der Build laeuft hier, weil GitHub kostenlose Hosted-
+# Runner bereitstellt und GHCR ohne separates Token-Management auskommt
+# (GITHUB_TOKEN reicht fuer packages:write).
+
 on:
   push:
     branches: [main]
@@ -7,8 +12,8 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: git.senity.ai
-  IMAGE_NAME: senity-admin/senity-claude-code
+  REGISTRY: ghcr.io
+  IMAGE_NAME: murc134/senity-code
 
 jobs:
   build:
@@ -24,12 +29,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Gitea Container Registry
+      - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ gitea.actor }}
-          password: ${{ secrets.GITEA_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata
         id: meta

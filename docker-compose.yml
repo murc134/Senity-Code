@@ -1,7 +1,7 @@
 services:
   senity-code:
-    # Image kommt aus der Gitea-Registry. Tag in .env ueberschreibbar (SENITY_IMAGE_TAG).
-    image: git.senity.ai/senity-admin/senity-claude-code:${SENITY_IMAGE_TAG:-latest}
+    # Image kommt aus der GitHub Container Registry. Tag in .env ueberschreibbar (SENITY_IMAGE_TAG).
+    image: ghcr.io/murc134/senity-code:${SENITY_IMAGE_TAG:-latest}
     container_name: senity-code
     hostname: senity-code
 
