@@ -4,7 +4,7 @@
 
 Das Senity-Workspace-Container-Setup (Repo `senity/senity-code`, Master-Epic
 #1030) verteilt das Container-Image zukuenftig per Gitea-Registry
-(`git.senity.ai/senity-admin/senity-code:<tag>`, siehe Ticket #1031).
+(`git.senity.ai/senity-admin/senity-claude-code:<tag>`, siehe Ticket #1031).
 Parallel laeuft die globale `senity`-CLI (Ticket #1041), die das Image
 ad-hoc fuer einzelne Arbeitsverzeichnisse startet.
 

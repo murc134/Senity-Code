@@ -18,7 +18,7 @@
 #define AppPublisher   "Senity"
 #define AppVersion     "1.0.0"
 #define AppExeId       "senity"
-#define AppUrl         "https://git.senity.ai/senity-admin/senity-code"
+#define AppUrl         "https://git.senity.ai/senity-admin/senity-claude-code"
 
 [Setup]
 AppId={{8F3A6C21-7E44-4B9D-9C2E-A1B2C3D4E5F6}

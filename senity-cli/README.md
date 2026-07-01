@@ -10,7 +10,7 @@ Analog zu `claude`, `codex`, `gemini`: irgendwo `cd`, `senity` tippen, drin sein
 ### Linux / macOS
 
 ```bash
-curl -fsSL https://git.senity.ai/senity-admin/senity-code/raw/branch/main/senity-cli/install.sh | bash
+curl -fsSL https://git.senity.ai/senity-admin/senity-claude-code/raw/branch/main/senity-cli/install.sh | bash
 ```
 
 Oder lokal aus dem Repo:
@@ -25,7 +25,7 @@ liegt, gibt der Installer die Zeile fuer `~/.bashrc` / `~/.zshrc` aus.
 ### Windows (pwsh)
 
 ```powershell
-irm https://git.senity.ai/senity-admin/senity-code/raw/branch/main/senity-cli/install.ps1 | iex
+irm https://git.senity.ai/senity-admin/senity-claude-code/raw/branch/main/senity-cli/install.ps1 | iex
 ```
 
 Oder lokal:
@@ -79,7 +79,7 @@ senity --skip-update
 senity --mount ~/.gitconfig:/workspace/.gitconfig:ro
 
 # Spezifisches Image-Tag (Production-Pinning)
-senity --image git.senity.ai/senity-admin/senity-code:1.4.2
+senity --image git.senity.ai/senity-admin/senity-claude-code:1.4.2
 
 # Permission-Prompts aktivieren statt Yolo
 senity --no-yolo
@@ -125,10 +125,10 @@ beide Container (`--rm`).
 
 ```bash
 # Linux / macOS
-curl -fsSL https://git.senity.ai/senity-admin/senity-code/raw/branch/main/senity-cli/install.sh | bash
+curl -fsSL https://git.senity.ai/senity-admin/senity-claude-code/raw/branch/main/senity-cli/install.sh | bash
 
 # Windows
-irm https://git.senity.ai/senity-admin/senity-code/raw/branch/main/senity-cli/install.ps1 | iex
+irm https://git.senity.ai/senity-admin/senity-claude-code/raw/branch/main/senity-cli/install.ps1 | iex
 ```
 
 Ueberschreibt das Wrapper-Script. Cache und `.env` bleiben unangetastet.

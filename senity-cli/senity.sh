@@ -3,7 +3,7 @@
 # Startet einen Ad-hoc-Container mit dem aktuellen cwd als /workspace/cwd.
 #
 # Defaults:
-#   - Image:           git.senity.ai/senity-admin/senity-code:latest
+#   - Image:           git.senity.ai/senity-admin/senity-claude-code:latest
 #                      Fallback (kein Pull moeglich): senity-claude:latest
 #   - Auto-Update:     bei jedem Start (Image + Cache + MCPs). --skip-update ueberspringt.
 #   - Yolo-Mode:       an (Container ist isoliert). --no-yolo deaktiviert.
@@ -49,7 +49,7 @@ else
     SENITY_GITEA_AVAILABLE=0
 fi
 
-DEFAULT_IMAGE="git.senity.ai/senity-admin/senity-code:latest"
+DEFAULT_IMAGE="git.senity.ai/senity-admin/senity-claude-code:latest"
 FALLBACK_IMAGE="senity-claude:latest"
 DEFAULT_PROXY_URL="https://sdr.senity.ai/api/claude-proxy"
 

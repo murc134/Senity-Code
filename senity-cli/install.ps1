@@ -4,7 +4,7 @@
 # und fuegt diesen Pfad zum User-PATH hinzu.
 #
 # Quick-Install (pwsh):
-#   irm https://git.senity.ai/senity-admin/senity-code/raw/branch/main/senity-cli/install.ps1 | iex
+#   irm https://git.senity.ai/senity-admin/senity-claude-code/raw/branch/main/senity-cli/install.ps1 | iex
 #
 # Lokal aus dem Repo:
 #   .\senity-cli\install.ps1
@@ -18,8 +18,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
-$RawUrl      = "https://git.senity.ai/senity-admin/senity-code/raw/branch/main/senity-cli/senity.ps1"
-$LibRawUrl   = "https://git.senity.ai/senity-admin/senity-code/raw/branch/main/senity-cli/lib/gitea-device-flow.ps1"
+$RawUrl      = "https://git.senity.ai/senity-admin/senity-claude-code/raw/branch/main/senity-cli/senity.ps1"
+$LibRawUrl   = "https://git.senity.ai/senity-admin/senity-claude-code/raw/branch/main/senity-cli/lib/gitea-device-flow.ps1"
 $Target      = Join-Path $InstallDir "senity.ps1"
 $ShimBat     = Join-Path $InstallDir "senity.bat"
 $LibDir      = Join-Path $env:LOCALAPPDATA "senity\lib"

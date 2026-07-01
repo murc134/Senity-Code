@@ -3,7 +3,7 @@
 # Installiert das `senity`-Wrapper-Script nach ~/.local/bin/senity.
 #
 # Quick-Install:
-#   curl -fsSL https://git.senity.ai/senity-admin/senity-code/raw/branch/main/senity-cli/install.sh | bash
+#   curl -fsSL https://git.senity.ai/senity-admin/senity-claude-code/raw/branch/main/senity-cli/install.sh | bash
 #
 # Lokal aus dem Repo:
 #   ./senity-cli/install.sh
@@ -14,8 +14,8 @@ INSTALL_DIR="${SENITY_INSTALL_DIR:-${HOME}/.local/bin}"
 SHARE_DIR="${SENITY_SHARE_DIR:-${HOME}/.local/share/senity}"
 LIB_DIR="${SHARE_DIR}/lib"
 TARGET="${INSTALL_DIR}/senity"
-RAW_URL="https://git.senity.ai/senity-admin/senity-code/raw/branch/main/senity-cli/senity.sh"
-LIB_RAW_URL="https://git.senity.ai/senity-admin/senity-code/raw/branch/main/senity-cli/lib/gitea-device-flow.sh"
+RAW_URL="https://git.senity.ai/senity-admin/senity-claude-code/raw/branch/main/senity-cli/senity.sh"
+LIB_RAW_URL="https://git.senity.ai/senity-admin/senity-claude-code/raw/branch/main/senity-cli/lib/gitea-device-flow.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 log()  { printf '\033[38;5;141m[install]\033[0m %s\n' "$*"; }

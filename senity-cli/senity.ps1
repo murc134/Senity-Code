@@ -3,7 +3,7 @@
 # Startet einen Ad-hoc-Container mit dem aktuellen cwd als /workspace/cwd.
 #
 # Defaults:
-#   - Image:        git.senity.ai/senity-admin/senity-code:latest
+#   - Image:        git.senity.ai/senity-admin/senity-claude-code:latest
 #                   Fallback (kein Pull moeglich): senity-claude:latest
 #   - Auto-Update:  bei jedem Start. -SkipUpdate ueberspringt.
 #   - Yolo:         an. -NoYolo deaktiviert.
@@ -44,7 +44,7 @@ $SenityMcpConfig = Join-Path $SenityHome "mcp-config.json"
 $SenityCacheDir  = Join-Path $SenityHome "cache"
 $SenityWsDir     = Join-Path $SenityHome "workspace"
 
-$DefaultImage    = "git.senity.ai/senity-admin/senity-code:latest"
+$DefaultImage    = "git.senity.ai/senity-admin/senity-claude-code:latest"
 $FallbackImage   = "senity-claude:latest"
 $DefaultProxyUrl = "https://sdr.senity.ai/api/claude-proxy"
 

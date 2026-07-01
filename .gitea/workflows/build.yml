@@ -8,7 +8,7 @@ on:
 
 env:
   REGISTRY: git.senity.ai
-  IMAGE_NAME: senity-admin/senity-code
+  IMAGE_NAME: senity-admin/senity-claude-code
 
 jobs:
   build:
