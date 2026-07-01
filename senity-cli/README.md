@@ -94,7 +94,7 @@ senity --skip-update
 senity --mount ~/.gitconfig:/workspace/.gitconfig:ro
 
 # Spezifisches Image-Tag (Production-Pinning)
-senity --image git.senity.ai/senity-admin/senity-claude-code:1.4.2
+senity --image ghcr.io/murc134/senity-code:1.4.2
 
 # Permission-Prompts aktivieren statt Yolo
 senity --no-yolo

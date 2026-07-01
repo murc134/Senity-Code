@@ -3,7 +3,7 @@
 # Startet einen Ad-hoc-Container mit dem aktuellen cwd als /workspace/cwd.
 #
 # Defaults:
-#   - Image:           git.senity.ai/senity-admin/senity-claude-code:latest
+#   - Image:           ghcr.io/murc134/senity-code:latest
 #                      Fallback (kein Pull moeglich): senity-claude:latest
 #   - Auto-Update:     bei jedem Start (Image + Cache + MCPs). --skip-update ueberspringt.
 #   - Yolo-Mode:       an (Container ist isoliert). --no-yolo deaktiviert.
@@ -53,7 +53,7 @@ else
     SENITY_GITEA_AVAILABLE=0
 fi
 
-DEFAULT_IMAGE="git.senity.ai/senity-admin/senity-claude-code:latest"
+DEFAULT_IMAGE="ghcr.io/murc134/senity-code:latest"
 FALLBACK_IMAGE="senity-claude:latest"
 DEFAULT_PROXY_URL="https://sdr.senity.ai/api/claude-proxy"
 
@@ -470,7 +470,7 @@ do_update() {
                 IMAGE="$FALLBACK_IMAGE"
             else
                 err "Kein verwendbares Image (weder $IMAGE noch $FALLBACK_IMAGE lokal)."
-                err "Pruefe Login: docker login git.senity.ai"
+                err "Pruefe Netzwerk/Registry-Zugriff auf ghcr.io."
                 exit 1
             fi
         fi

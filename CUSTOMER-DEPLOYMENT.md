@@ -1,7 +1,10 @@
 # Senity Code - Customer Deployment
 
-Kunden ziehen das fertige Senity-Code-Image aus der Senity-Gitea-Registry
-und betreiben es per `docker compose`. Source-Repo nicht erforderlich.
+Kunden ziehen das fertige Senity-Code-Image aus der GitHub Container Registry
+(`ghcr.io/murc134/senity-code`, oeffentlich, kein Registry-Login noetig) und
+betreiben es per `docker compose`. Source-Repo nicht erforderlich. Der
+Gitea-OAuth-Flow (`senity gitea-login` / `gitea-token`) wird weiterhin fuer
+Git-Zugriffe auf `git.senity.ai` genutzt, nicht mehr fuer den Image-Pull.
 
 ## Voraussetzungen
 
