@@ -2,7 +2,11 @@
 # claude-senity.ps1 — Senity Workspace (Container Start)
 #
 # Usage:
-#   .\claude-senity.ps1                    # Senity Chat Proxy (einziger Provider)
+#   .\claude-senity.ps1                    # Senity Code ueber Senity Chat Proxy
+#   .\claude-senity.ps1 --select           # Agent-Auswahl: Senity, Claude, Codex, Antigravity
+#   .\claude-senity.ps1 codex              # Codex CLI starten
+#   .\claude-senity.ps1 antigravity        # Antigravity CLI starten
+#   .\claude-senity.ps1 claude             # Claude Code upstream starten
 #   .\claude-senity.ps1 --yolo             # Yolo Mode (ungefragte Ausfuehrung)
 #   .\claude-senity.ps1 --model NAME       # Modell ueberschreiben
 #   .\claude-senity.ps1 --comfyui          # ComfyUI Server starten
@@ -24,6 +28,9 @@ param(
 $Yolo = $false
 $NoYolo = $false
 $Model = $null
+$AgentMode = "senity"
+$AgentModeExplicit = $false
+$SelectAgent = $false
 $Rebuild = $false
 $CreateShortcut = $false
 $UpdateWsl = $false
@@ -55,6 +62,15 @@ if ($AllArgs) {
                 $i++
                 if ($i -lt $AllArgs.Count) { $Model = $AllArgs[$i] }
             }
+            '-agent'           {
+                $i++
+                if ($i -lt $AllArgs.Count) { $AgentMode = $AllArgs[$i]; $AgentModeExplicit = $true }
+            }
+            '-mode'            {
+                $i++
+                if ($i -lt $AllArgs.Count) { $AgentMode = $AllArgs[$i]; $AgentModeExplicit = $true }
+            }
+            '-select'          { $SelectAgent = $true }
             '-rebuild'         { $Rebuild = $true }
             '-create-shortcut' { $CreateShortcut = $true }
             '-createshortcut'  { $CreateShortcut = $true }
@@ -80,7 +96,15 @@ if ($AllArgs) {
             '-help'            { $Help = $true }
             '-h'               { $Help = $true }
             '-?'               { $Help = $true }
-            default            { $Rest += $a }
+            default            {
+                $candidate = $a.ToLowerInvariant()
+                if (-not $AgentModeExplicit -and @('senity','claude','codex','antigravity','agy','select') -contains $candidate) {
+                    if ($candidate -eq 'agy') { $candidate = 'antigravity' }
+                    if ($candidate -eq 'select') { $SelectAgent = $true } else { $AgentMode = $candidate; $AgentModeExplicit = $true }
+                } else {
+                    $Rest += $a
+                }
+            }
         }
     }
 }
@@ -100,6 +124,8 @@ $ClaudeLocalRepoUrl = 'ssh://git@git.senity.ai:2200/senity-admin/senity-claude-c
 # Originalargumente fuer einen moeglichen Re-Exec nach Self-Update sichern.
 function Get-OriginalLauncherArgs {
     $a = @()
+    if ($AgentModeExplicit -and $AgentMode -ne 'senity') { $a += '-Agent'; $a += $AgentMode }
+    if ($SelectAgent)      { $a += '-Select' }
     if ($Yolo)           { $a += '-Yolo' }
     if ($NoYolo)         { $a += '-NoYolo' }
     if ($Model)          { $a += '-Model'; $a += $Model }
@@ -125,6 +151,54 @@ function Write-INFO { param([string]$m) Write-Host "  [INFO] $m" -ForegroundColo
 function Write-DBG  { param([string]$m) Write-Host "  [DBG]  $m" -ForegroundColor DarkGray }
 function Write-Sep  { Write-Host "  ────────────────────────────────────────" -ForegroundColor DarkGray }
 function ConvertTo-DockerPath { param([string]$p) return ($p -replace '\\', '/') }
+
+function Normalize-AgentMode {
+    param([string]$Mode)
+    $m = if ($Mode) { $Mode.ToLowerInvariant() } else { "senity" }
+    switch ($m) {
+        "senity"      { return "senity" }
+        "claude"      { return "claude" }
+        "codex"       { return "codex" }
+        "antigravity" { return "antigravity" }
+        "agy"         { return "antigravity" }
+        default       { Exit-Error "Unbekannter Agent-Modus: $Mode`nErlaubt: senity, claude, codex, antigravity." }
+    }
+}
+
+function Get-AgentLabel {
+    param([string]$Mode)
+    switch ($Mode) {
+        "senity"      { return "Senity Code (Claude Code + Senity Proxy)" }
+        "claude"      { return "Claude Code (Anthropic Auth/API)" }
+        "codex"       { return "Codex CLI" }
+        "antigravity" { return "Antigravity CLI" }
+        default       { return $Mode }
+    }
+}
+
+function Select-AgentMode {
+    Write-Host ""
+    Write-Host "  Agent auswaehlen:" -ForegroundColor White
+    Write-Host "    1) Senity       Claude Code ueber Senity Proxy (Default: qwen3.6:35b)" -ForegroundColor White
+    Write-Host "    2) Claude       Claude Code upstream mit Anthropic Login/API-Key" -ForegroundColor White
+    Write-Host "    3) Codex        OpenAI Codex CLI" -ForegroundColor White
+    Write-Host "    4) Antigravity  Google Antigravity CLI (agy)" -ForegroundColor White
+    Write-Host ""
+    $choice = Read-Host "  Auswahl [1]"
+    switch (($choice.Trim()).ToLowerInvariant()) {
+        ""             { return "senity" }
+        "1"            { return "senity" }
+        "senity"       { return "senity" }
+        "2"            { return "claude" }
+        "claude"       { return "claude" }
+        "3"            { return "codex" }
+        "codex"        { return "codex" }
+        "4"            { return "antigravity" }
+        "antigravity"  { return "antigravity" }
+        "agy"          { return "antigravity" }
+        default        { Exit-Error "Ungueltige Auswahl: $choice" }
+    }
+}
 
 function Exit-Error {
     param([string]$msg, [int]$code = 1)
@@ -636,16 +710,21 @@ Write-Host ""
 Write-DBG "ScriptDir  : $ScriptDir"
 Write-DBG "PowerShell : $($PSVersionTable.PSVersion)"
 Write-DBG "User       : $($env:USERNAME)  PID: $PID"
-Write-DBG "Args       : Yolo=$Yolo Model=$Model ComfyUI=$ComfyUI"
+if ($SelectAgent) { $AgentMode = Select-AgentMode; $AgentModeExplicit = $true }
+$AgentMode = Normalize-AgentMode $AgentMode
+$AgentLabel = Get-AgentLabel $AgentMode
+Write-DBG "Args       : Agent=$AgentMode Yolo=$Yolo Model=$Model ComfyUI=$ComfyUI"
 Write-Host ""
 
 # ── Help ──
 if ($Help) {
-    Write-Host "  Usage: .\claude-senity.ps1 [OPTIONS]" -ForegroundColor White
+    Write-Host "  Usage: .\claude-senity.ps1 [agent] [OPTIONS] [-- tool-args...]" -ForegroundColor White
     Write-Host ""
-    Write-Host "  Provider: Senity Chat Proxy (fest, kein anderer Provider verfuegbar)" -ForegroundColor White
+    Write-Host "  Agents: senity (Default), claude, codex, antigravity" -ForegroundColor White
     Write-Host ""
     Write-Host "  Optionen:" -ForegroundColor White
+    Write-Host "    --select           Interaktive Agent-Auswahl anzeigen" -ForegroundColor White
+    Write-Host "    --agent NAME       Agent-Modus setzen: senity, claude, codex, antigravity" -ForegroundColor White
     Write-Host "    --model NAME       Modell ueberschreiben (Default: Senity Proxy)" -ForegroundColor White
     Write-Host "    --yolo             Yolo Mode (Default: an, Container ist isoliert)" -ForegroundColor White
     Write-Host "    --no-yolo          Yolo Mode deaktivieren (Permission-Prompts)" -ForegroundColor White
@@ -759,34 +838,37 @@ Invoke-LauncherSelfUpdate -ScriptDir $ScriptDir -RepoUrl $ClaudeLocalRepoUrl
 # [2/6] .env laden + Credentials sicherstellen (interaktiv + Validierung)
 # ══════════════════════════════════════════════════════════════
 Write-Sep
-Write-INFO "[2/6] Credentials (Senity Chat Proxy)..."
+Write-INFO "[2/6] Credentials ($AgentLabel)..."
 
 $envFile  = Join-Path $ScriptDir ".env"
 $envVars  = Read-EnvFile -Path $envFile
 $defaultUrl = "https://sdr.senity.ai/api/claude-proxy"
+$baseUrl = $null
+$token = $null
 
-if (Test-Path $envFile) {
-    Write-OK ".env gefunden: $envFile ($($envVars.Count) Variablen)"
-} else {
-    Write-INFO ".env existiert noch nicht — wird beim ersten gueltigen Key angelegt"
-}
+if ($AgentMode -eq "senity") {
+    if (Test-Path $envFile) {
+        Write-OK ".env gefunden: $envFile ($($envVars.Count) Variablen)"
+    } else {
+        Write-INFO ".env existiert noch nicht — wird beim ersten gueltigen Key angelegt"
+    }
 
-# URL: aus .env, sonst Env-Var, sonst Default
-$baseUrl = $envVars['SENITY_CHAT_PROXY_URL']
-if (-not $baseUrl) { $baseUrl = $env:SENITY_CHAT_PROXY_URL }
-if (-not $baseUrl) { $baseUrl = $defaultUrl }
+    # URL: aus .env, sonst Env-Var, sonst Default
+    $baseUrl = $envVars['SENITY_CHAT_PROXY_URL']
+    if (-not $baseUrl) { $baseUrl = $env:SENITY_CHAT_PROXY_URL }
+    if (-not $baseUrl) { $baseUrl = $defaultUrl }
 
-# Key: aus .env, sonst Env-Var
-$token = $envVars['SENITY_CHAT_PROXY_KEY']
-if (-not $token) { $token = $env:SENITY_CHAT_PROXY_KEY }
+    # Key: aus .env, sonst Env-Var
+    $token = $envVars['SENITY_CHAT_PROXY_KEY']
+    if (-not $token) { $token = $env:SENITY_CHAT_PROXY_KEY }
 
-$keyOk         = $false
-$attempts      = 0
-$maxAttempts   = 3
-$shouldPersist = $false
+    $keyOk         = $false
+    $attempts      = 0
+    $maxAttempts   = 3
+    $shouldPersist = $false
 
-while (-not $keyOk) {
-    if (-not $token) {
+    while (-not $keyOk) {
+        if (-not $token) {
         # Erstmalige Eingabe (oder nach explizitem Verwurf)
         Write-Host ""
         Write-INFO "SENITY_CHAT_PROXY_KEY ist nicht gesetzt."
@@ -799,11 +881,11 @@ while (-not $keyOk) {
             Exit-Error "Kein Key eingegeben. Abbruch."
         }
         $shouldPersist = $true
-    }
+        }
 
-    Write-INFO "Validiere Key gegen $baseUrl ..."
-    $result = Test-SenityKey -Url $baseUrl -Key $token
-    if ($result.valid) {
+        Write-INFO "Validiere Key gegen $baseUrl ..."
+        $result = Test-SenityKey -Url $baseUrl -Key $token
+        if ($result.valid) {
         Write-OK "Key valide ($($result.reason))"
         if ($baseUrl -match '^http://' -and $baseUrl -notmatch '^http://(localhost|127\.)') {
             Write-WARN "Proxy-URL nutzt HTTP (unverschluesselt). API-Key wird im Klartext uebertragen!"
@@ -822,17 +904,17 @@ while (-not $keyOk) {
             }
         }
         break
-    }
+        }
 
-    $attempts++
-    Write-FAIL "Key-Validierung fehlgeschlagen: $($result.reason)"
+        $attempts++
+        Write-FAIL "Key-Validierung fehlgeschlagen: $($result.reason)"
 
-    # status=0 = Netzwerkfehler (Timeout/DNS/ConnectFailure). Key NICHT verwerfen,
-    # User fragen ob trotzdem gestartet werden soll. Bei echtem Auth-Fehler
-    # (401/403/404) Key verwerfen und neuen abfragen.
-    $networkError = ($result.status -eq 0)
+        # status=0 = Netzwerkfehler (Timeout/DNS/ConnectFailure). Key NICHT verwerfen,
+        # User fragen ob trotzdem gestartet werden soll. Bei echtem Auth-Fehler
+        # (401/403/404) Key verwerfen und neuen abfragen.
+        $networkError = ($result.status -eq 0)
 
-    if ($networkError) {
+        if ($networkError) {
         Write-WARN "Proxy nicht erreichbar oder antwortet zu langsam. Der Key wurde NICHT als ungueltig erkannt."
         $skipResp = (Read-Host "  Trotzdem starten und Key-Check ueberspringen? [Y/n]").Trim().ToLower()
         if ($skipResp -eq '' -or $skipResp -eq 'y' -or $skipResp -eq 'j' -or $skipResp -eq 'yes' -or $skipResp -eq 'ja') {
@@ -849,28 +931,35 @@ while (-not $keyOk) {
             }
             break
         }
-    }
+        }
 
-    if ($attempts -ge $maxAttempts) {
+        if ($attempts -ge $maxAttempts) {
         Exit-Error "Nach $maxAttempts Versuchen kein gueltiger Key. Abbruch."
+        }
+        Write-INFO "Versuch $attempts/$maxAttempts fehlgeschlagen. Bitte Key erneut eingeben."
+        $token = $null
+        $shouldPersist = $true
     }
-    Write-INFO "Versuch $attempts/$maxAttempts fehlgeschlagen. Bitte Key erneut eingeben."
-    $token = $null
-    $shouldPersist = $true
+} else {
+    Write-OK "Keine Senity-Proxy-Credentials erforderlich fuer $AgentLabel."
 }
 
 # Modell
 $defaultModel      = "qwen3.6:35b"
 $defaultModelLabel = "Senity Proxy"
-if (-not $Model) { $Model = $defaultModel }
-$modelLabel = if ($Model -eq $defaultModel) { "$defaultModelLabel ($defaultModel)" } else { $Model }
-Write-OK "Modell: $modelLabel"
+if ($AgentMode -eq "senity" -and -not $Model) { $Model = $defaultModel }
+$modelLabel = if ($AgentMode -eq "senity" -and $Model -eq $defaultModel) { "$defaultModelLabel ($defaultModel)" } elseif ($Model) { $Model } else { "Tool-Default" }
+if ($AgentMode -eq "senity" -or $Model) { Write-OK "Modell: $modelLabel" }
 
 # Yolo — Default: an (Container ist isoliert). --no-yolo schaltet aus.
 $yolo = $true
 if ($NoYolo) { $yolo = $false }
 if ($Yolo)   { $yolo = $true }
-Write-OK "Yolo-Mode: $([bool]$yolo)$(if ($yolo) { '  (Skip-Permissions aktiv, Container isoliert)' })"
+if (@("senity", "claude") -contains $AgentMode) {
+    Write-OK "Yolo-Mode: $([bool]$yolo)$(if ($yolo) { '  (Skip-Permissions aktiv, Container isoliert)' })"
+} else {
+    Write-OK "Yolo-Mode: nicht angewendet fuer $AgentLabel"
+}
 
 $safeUser = ($env:USERNAME -replace '[^a-zA-Z0-9_.-]', '_').ToLower()
 
@@ -1566,8 +1655,7 @@ $stripMouseReporting = 'auto'
 if ($MouseReporting) { $stripMouseReporting = '0' }
 if ($NoMouseReporting) { $stripMouseReporting = '1' }
 $dockerArgs += @(
-    "-e", "ANTHROPIC_BASE_URL=$baseUrl",
-    "-e", "ANTHROPIC_API_KEY=$token",
+    "-e", "SENITY_AGENT_MODE=$AgentMode",
     "-e", "HOME=/workspace",
     "-e", "TERM=xterm-256color",
     "-e", "SENITY_HOST_TERM_PROGRAM=$($env:TERM_PROGRAM)",
@@ -1577,6 +1665,36 @@ $dockerArgs += @(
     "-e", "SENITY_LINKIFY=1",
     "-e", "SENITY_LINK_PATH_MAP=$linkPathMapJson"
 )
+if ($AgentMode -eq "senity") {
+    $dockerArgs += @(
+        "-e", "SENITY_CHAT_PROXY_URL=$baseUrl",
+        "-e", "SENITY_CHAT_PROXY_KEY=$token",
+        "-e", "ANTHROPIC_BASE_URL=$baseUrl",
+        "-e", "ANTHROPIC_API_KEY=$token"
+    )
+} else {
+    $dockerArgs += @(
+        "-e", "SENITY_NO_BANNER=1",
+        "-e", "SENITY_MODEL_SYNC=0",
+        "-e", "SENITY_THEME_DEFAULT=0"
+    )
+    foreach ($envName in @(
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "ANTHROPIC_DEFAULT_FABLE_MODEL",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "OPENAI_API_KEY",
+        "GOOGLE_API_KEY"
+    )) {
+        $envValue = [Environment]::GetEnvironmentVariable($envName)
+        if ($envValue) { $dockerArgs += @("-e", "$envName=$envValue") }
+    }
+}
 if ($ComfyUI) {
     $dockerArgs += @(
         "-p", "127.0.0.1:${ComfyUIPort}:8188",
@@ -1589,9 +1707,11 @@ if ($ComfyUI) {
     }
 }
 
-$claudeArgs = @()
-if ($Model) { $claudeArgs += @("--model", $Model) }
-if ($yolo)  { $claudeArgs += "--dangerously-skip-permissions" }
+$agentArgs = @()
+if ($Model) { $agentArgs += @("--model", $Model) }
+if (@("senity", "claude") -contains $AgentMode -and $yolo) {
+    $agentArgs += "--dangerously-skip-permissions"
+}
 
 # INITIAL_PROMPT.md dynamisch einlesen (bei jedem Start neu, kein Rebuild noetig).
 # HTML-Kommentarbloecke <!-- ... --> werden entfernt. Der gereinigte Inhalt wird
@@ -1601,8 +1721,8 @@ if ($yolo)  { $claudeArgs += "--dangerously-skip-permissions" }
 # uebergeben hat ($Rest enthaelt ein Argument ohne "-"-Praefix), wird die
 # Datei NICHT geschrieben und Claude startet ohne automatische Nachricht.
 # Im ComfyUI-Modus wird grundsaetzlich kein Claude-Initial-Prompt geschrieben.
-$hasUserPrompt = [bool]$ComfyUI
-if (-not $ComfyUI) {
+$hasUserPrompt = [bool]$ComfyUI -or ($AgentMode -ne "senity")
+if (-not $ComfyUI -and $AgentMode -eq "senity") {
     foreach ($r in $Rest) {
         if ($null -ne $r -and "$r".Length -gt 0 -and -not ("$r".StartsWith('-'))) {
             $hasUserPrompt = $true
@@ -1632,9 +1752,9 @@ if (-not $hasUserPrompt) {
     }
 }
 
-# Hinweis: Der Codex-/Gemini-Login passiert NICHT mehr hier im Launcher.
-# Wer Codex/Gemini im Container nutzen will, fuehrt einmalig das separate
-# Script aus:  .\codex-gemini-login.bat   (Linux/macOS: ./codex-gemini-login.sh)
+# Codex-, Claude- und Antigravity-Logins passieren im jeweiligen Tool. Durch
+# HOME=/workspace landen Tokens persistent in workspace/.codex, workspace/.claude
+# bzw. workspace/.gemini.
 
 # ══════════════════════════════════════════════════════════════
 # [6/6] Container starten
@@ -1650,10 +1770,16 @@ if ($ComfyUI) {
     Write-Host "  Modelle   : workspace\.comfyui\models" -ForegroundColor White
     Write-Host "  GPU       : $([bool]$ComfyUIGpu)" -ForegroundColor White
 } else {
-    Write-Host "  Provider  : Senity Chat Proxy" -ForegroundColor White
-    Write-Host "  URL       : $baseUrl" -ForegroundColor White
-    Write-Host "  Modell    : $modelLabel" -ForegroundColor White
-    Write-Host "  Yolo      : $([bool]$yolo)" -ForegroundColor White
+    Write-Host "  Agent     : $AgentLabel" -ForegroundColor White
+    if ($AgentMode -eq "senity") {
+        Write-Host "  URL       : $baseUrl" -ForegroundColor White
+        Write-Host "  Modell    : $modelLabel" -ForegroundColor White
+    } elseif ($Model) {
+        Write-Host "  Modell    : $Model" -ForegroundColor White
+    }
+    if (@("senity", "claude") -contains $AgentMode) {
+        Write-Host "  Yolo      : $([bool]$yolo)" -ForegroundColor White
+    }
 }
 Write-Host "  Container : $containerName" -ForegroundColor White
 Write-Host "  ════════════════════════════════════════════" -ForegroundColor Magenta
@@ -1693,9 +1819,15 @@ if ($ComfyUI) {
     Write-Host ""
     docker run @dockerArgs senity-claude:latest senity-comfyui @Rest
 } else {
-    Write-Host "  Starte Claude Code... (Ctrl+C zum Beenden)" -ForegroundColor Green
+    Write-Host "  Starte $AgentLabel... (Ctrl+C zum Beenden)" -ForegroundColor Green
     Write-Host ""
-    docker run @dockerArgs senity-claude:latest senity-mascot-filter claude @claudeArgs @Rest
+    switch ($AgentMode) {
+        "senity"      { docker run @dockerArgs senity-claude:latest senity-mascot-filter claude @agentArgs @Rest }
+        "claude"      { docker run @dockerArgs senity-claude:latest claude-upstream @agentArgs @Rest }
+        "codex"       { docker run @dockerArgs senity-claude:latest codex @agentArgs @Rest }
+        "antigravity" { docker run @dockerArgs senity-claude:latest agy @agentArgs @Rest }
+        default       { Exit-Error "Unbekannter Agent-Modus: $AgentMode" }
+    }
 }
 $containerExit = $LASTEXITCODE
 Write-Host ""
@@ -1703,7 +1835,7 @@ if ($containerExit -eq 0 -or $containerExit -eq 130) {
     if ($ComfyUI) {
         Write-OK "ComfyUI beendet (Exit: $containerExit)"
     } else {
-        Write-OK "Claude Code beendet (Exit: $containerExit)"
+        Write-OK "$AgentLabel beendet (Exit: $containerExit)"
     }
 } else {
     Write-FAIL "Container beendet mit Exit-Code: $containerExit"

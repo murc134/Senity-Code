@@ -9,7 +9,11 @@
 #   - Yolo-Mode:       an (Container ist isoliert). --no-yolo deaktiviert.
 #
 # Usage:
-#   senity                          Container starten, Claude Code an
+#   senity                          Container starten, Senity Code an
+#   senity select                   Agent-Auswahl anzeigen
+#   senity codex                    Codex CLI starten
+#   senity claude                   Claude Code upstream starten
+#   senity antigravity              Antigravity CLI starten
 #   senity --skip-update            Ohne docker pull / git pull
 #   senity --no-yolo                Permission-Prompts aktivieren
 #   senity --mount H:C[:ro]         Zusatz-Mount (mehrfach erlaubt)
@@ -69,9 +73,10 @@ YOLO=1
 EXTRA_MOUNTS=()
 IMAGE_OVERRIDE=""
 SUBCOMMAND=""
+AGENT_MODE="senity"
 COMFYUI_PORT=8188
 COMFYUI_GPU=0
-CLAUDE_ARGS=()
+TOOL_ARGS=()
 GITEA_FLAG_HEADLESS=0
 GITEA_FLAG_ENSURE_FRESH=0
 GITEA_FLAG_WRITE_DOCKER=0
@@ -82,10 +87,17 @@ print_help() {
 senity — Senity-Workspace-Container auf Knopfdruck
 
 USAGE
-  senity [options] [-- claude-args...]
+  senity [agent] [options] [-- tool-args...]
   senity login
   senity comfyui [-- comfyui-args...]
   senity --help
+
+AGENTS
+  senity               Claude Code ueber Senity Proxy (Default: qwen3.6:35b)
+  claude               Claude Code upstream mit Anthropic Login/API-Key
+  codex                OpenAI Codex CLI
+  antigravity          Google Antigravity CLI (agy)
+  select               Interaktive Auswahl
 
 OPTIONS
   --skip-update         Ueberspringt docker pull + git pull beim Start
@@ -99,7 +111,7 @@ OPTIONS
 
 SUBCOMMANDS
   login                       Senity-Proxy-Key in ~/.senity/.env hinterlegen
-  comfyui                     ComfyUI statt Claude Code starten
+  comfyui                     ComfyUI statt Agent starten
   gitea-login [--headless]    OAuth2 Device-Flow gegen git.senity.ai
   gitea-token [flags]         Frischen Access-Token bereitstellen
                                 --ensure-fresh        Refresh wenn abgelaufen
@@ -115,6 +127,40 @@ EXIT-CODES (gitea-*)
 EOF
 }
 
+normalize_agent_mode() {
+    case "${1:-senity}" in
+        senity|claude|codex|antigravity) printf '%s' "$1" ;;
+        agy) printf '%s' "antigravity" ;;
+        *) err "Unbekannter Agent-Modus: $1"; exit 1 ;;
+    esac
+}
+
+agent_label() {
+    case "$1" in
+        senity) printf '%s' "Senity Code (Claude Code + Senity Proxy)" ;;
+        claude) printf '%s' "Claude Code (Anthropic Auth/API)" ;;
+        codex) printf '%s' "Codex CLI" ;;
+        antigravity) printf '%s' "Antigravity CLI" ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
+select_agent_mode() {
+    printf '\nAgent auswaehlen:\n' >&2
+    printf '  1) Senity       Claude Code ueber Senity Proxy (Default: qwen3.6:35b)\n' >&2
+    printf '  2) Claude       Claude Code upstream mit Anthropic Login/API-Key\n' >&2
+    printf '  3) Codex        OpenAI Codex CLI\n' >&2
+    printf '  4) Antigravity  Google Antigravity CLI (agy)\n\n' >&2
+    read -r -p "Auswahl [1]: " choice
+    case "$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')" in
+        ""|1|senity) printf '%s' "senity" ;;
+        2|claude) printf '%s' "claude" ;;
+        3|codex) printf '%s' "codex" ;;
+        4|antigravity|agy) printf '%s' "antigravity" ;;
+        *) err "Ungueltige Auswahl: $choice"; exit 1 ;;
+    esac
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --skip-update) SKIP_UPDATE=1; shift ;;
@@ -127,6 +173,12 @@ while [[ $# -gt 0 ]]; do
         --help|-h)     print_help; exit 0 ;;
         login)         SUBCOMMAND="login"; shift ;;
         comfyui)       SUBCOMMAND="comfyui"; shift ;;
+        senity)        AGENT_MODE="senity"; shift ;;
+        claude)        AGENT_MODE="claude"; shift ;;
+        codex)         AGENT_MODE="codex"; shift ;;
+        antigravity)   AGENT_MODE="antigravity"; shift ;;
+        agy)           AGENT_MODE="antigravity"; shift ;;
+        select)        AGENT_MODE="$(select_agent_mode)"; shift ;;
         gitea-login)   SUBCOMMAND="gitea-login"; shift ;;
         gitea-token)   SUBCOMMAND="gitea-token"; shift ;;
         gitea-status)  SUBCOMMAND="gitea-status"; shift ;;
@@ -135,11 +187,13 @@ while [[ $# -gt 0 ]]; do
         --ensure-fresh)        GITEA_FLAG_ENSURE_FRESH=1; shift ;;
         --write-docker-config) GITEA_FLAG_WRITE_DOCKER=1; shift ;;
         --print)               GITEA_FLAG_PRINT=1; shift ;;
-        --)            shift; CLAUDE_ARGS=("$@"); break ;;
-        *)             CLAUDE_ARGS+=("$1"); shift ;;
+        --)            shift; TOOL_ARGS=("$@"); break ;;
+        *)             TOOL_ARGS+=("$1"); shift ;;
     esac
 done
 
+AGENT_MODE="$(normalize_agent_mode "$AGENT_MODE")"
+AGENT_LABEL="$(agent_label "$AGENT_MODE")"
 IMAGE="${IMAGE_OVERRIDE:-$DEFAULT_IMAGE}"
 
 if ! [[ "$COMFYUI_PORT" =~ ^[0-9]+$ ]] || (( COMFYUI_PORT < 1 || COMFYUI_PORT > 65535 )); then
@@ -451,14 +505,41 @@ run_container() {
     local -a docker_args=(
         run --rm -it
         --name "$container_name"
-        -e "SENITY_CHAT_PROXY_URL=$SENITY_CHAT_PROXY_URL"
-        -e "SENITY_CHAT_PROXY_KEY=$SENITY_CHAT_PROXY_KEY"
-        -e "ANTHROPIC_BASE_URL=$SENITY_CHAT_PROXY_URL"
-        -e "ANTHROPIC_API_KEY=$SENITY_CHAT_PROXY_KEY"
+        -e "SENITY_AGENT_MODE=$AGENT_MODE"
         -e "TERM=${TERM:-xterm-256color}"
         -v "$SENITY_WORKSPACE_DIR:/workspace"
         -v "$cwd:/workspace/cwd"
     )
+
+    if [[ "$AGENT_MODE" == "senity" ]]; then
+        docker_args+=(
+            -e "SENITY_CHAT_PROXY_URL=$SENITY_CHAT_PROXY_URL"
+            -e "SENITY_CHAT_PROXY_KEY=$SENITY_CHAT_PROXY_KEY"
+            -e "ANTHROPIC_BASE_URL=$SENITY_CHAT_PROXY_URL"
+            -e "ANTHROPIC_API_KEY=$SENITY_CHAT_PROXY_KEY"
+        )
+    else
+        docker_args+=(
+            -e "SENITY_NO_BANNER=1"
+            -e "SENITY_MODEL_SYNC=0"
+            -e "SENITY_THEME_DEFAULT=0"
+        )
+        for env_name in \
+            ANTHROPIC_API_KEY \
+            ANTHROPIC_AUTH_TOKEN \
+            ANTHROPIC_BASE_URL \
+            ANTHROPIC_MODEL \
+            ANTHROPIC_DEFAULT_OPUS_MODEL \
+            ANTHROPIC_DEFAULT_SONNET_MODEL \
+            ANTHROPIC_DEFAULT_HAIKU_MODEL \
+            ANTHROPIC_DEFAULT_FABLE_MODEL \
+            CLAUDE_CODE_OAUTH_TOKEN \
+            OPENAI_API_KEY \
+            GOOGLE_API_KEY; do
+            env_value="${!env_name:-}"
+            [[ -n "$env_value" ]] && docker_args+=(-e "${env_name}=${env_value}")
+        done
+    fi
 
     if [[ "$is_comfyui" -eq 1 ]]; then
         docker_args+=(-p "127.0.0.1:${COMFYUI_PORT}:8188")
@@ -489,13 +570,27 @@ run_container() {
     if [[ "$is_comfyui" -eq 1 ]]; then
         log "Starte ComfyUI: http://127.0.0.1:${COMFYUI_PORT}"
         docker_args+=(senity-comfyui)
-    elif [[ "$YOLO" -eq 1 ]]; then
-        docker_args+=(senity-mascot-filter claude --dangerously-skip-permissions)
     else
-        docker_args+=(senity-mascot-filter claude)
+        log "Starte ${AGENT_LABEL}"
+        case "$AGENT_MODE" in
+            senity)
+                docker_args+=(senity-mascot-filter claude)
+                [[ "$YOLO" -eq 1 ]] && docker_args+=(--dangerously-skip-permissions)
+                ;;
+            claude)
+                docker_args+=(claude-upstream)
+                [[ "$YOLO" -eq 1 ]] && docker_args+=(--dangerously-skip-permissions)
+                ;;
+            codex)
+                docker_args+=(codex)
+                ;;
+            antigravity)
+                docker_args+=(agy)
+                ;;
+        esac
     fi
 
-    for arg in "${CLAUDE_ARGS[@]:-}"; do
+    for arg in "${TOOL_ARGS[@]:-}"; do
         [[ -z "$arg" ]] && continue
         docker_args+=("$arg")
     done
@@ -515,7 +610,7 @@ main() {
 
     require_docker
     ensure_dirs
-    if [[ "$SUBCOMMAND" == "comfyui" ]]; then
+    if [[ "$SUBCOMMAND" == "comfyui" || "$AGENT_MODE" != "senity" ]]; then
         if [[ -f "$SENITY_ENV_FILE" ]]; then
             # shellcheck disable=SC1090
             source "$SENITY_ENV_FILE"

@@ -1,7 +1,8 @@
-# Senity Workspace — Docker-basierter Claude Code
+# Senity Workspace — Docker-basierter Agent-Launcher
 
-Startet Claude Code in einem Docker Container, universell auf Windows, Linux und macOS.
-Einziger Provider: **Senity Chat Proxy**.
+Startet Senity Code, Claude Code, Codex oder Antigravity in einem Docker
+Container, universell auf Windows, Linux und macOS. Default ist **Senity Code**
+ueber den Senity Chat Proxy.
 
 ## Voraussetzungen
 
@@ -20,6 +21,10 @@ Einziger Provider: **Senity Chat Proxy**.
 ```powershell
 # Windows
 .\claude-senity.bat
+.\claude-senity.bat --select
+.\claude-senity.bat codex
+.\claude-senity.bat claude
+.\claude-senity.bat antigravity
 .\claude-senity.bat --yolo
 .\claude-senity.bat --create-shortcut   # Desktop-Verknuepfung einmalig anlegen
 .\claude-senity.bat --test-links        # Datei-/Ordner-/Weblink-Klicks testen
@@ -27,6 +32,10 @@ Einziger Provider: **Senity Chat Proxy**.
 
 # Linux / macOS
 ./claude-senity.sh
+./claude-senity.sh --select
+./claude-senity.sh codex
+./claude-senity.sh claude
+./claude-senity.sh antigravity
 ./claude-senity.sh --yolo
 ./claude-senity.sh --test-links
 ./claude-senity.sh --comfyui
@@ -38,11 +47,43 @@ Einziger Provider: **Senity Chat Proxy**.
 2. Image `senity-claude:latest` wird gebaut, falls noch nicht vorhanden
 3. `.bindings` wird mit Default-Inhalt angelegt, falls fehlend
 4. `workspace/` und `.claude/` werden angelegt
-5. Container startet mit allen Mounts und Senity-Proxy-Credentials
+5. Container startet mit allen Mounts; im Modus `senity` mit Senity-Proxy-Credentials
 
-## Provider
+## Agent-Auswahl
 
-Es gibt nur einen Provider: **Senity Chat Proxy**.
+Der Launcher kennt vier Agent-Modi:
+
+| Modus | Start | Auth / Provider | Persistente Daten |
+|---|---|---|---|
+| `senity` | Claude Code mit Senity Theme und Senity Proxy | `SENITY_CHAT_PROXY_KEY`, Default-Modell `qwen3.6:35b` | `workspace/.claude/` |
+| `claude` | Claude Code upstream | Claude Login oder `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` | `workspace/.claude/` |
+| `codex` | OpenAI Codex CLI | Codex Login oder `OPENAI_API_KEY` | `workspace/.codex/` |
+| `antigravity` | Google Antigravity CLI (`agy`) | Antigravity/Gemini Login oder `GOOGLE_API_KEY` | `workspace/.gemini/` |
+
+Direktaufrufe:
+
+```bash
+./claude-senity.sh senity
+./claude-senity.sh claude
+./claude-senity.sh codex
+./claude-senity.sh antigravity
+
+.\claude-senity.bat --select
+```
+
+Globale CLI:
+
+```bash
+senity select
+senity claude
+senity codex
+senity antigravity
+```
+
+## Senity Provider
+
+Der Modus `senity` nutzt Claude Code als TUI, setzt aber den Senity Chat Proxy
+als Endpoint.
 
 | Provider | Default-Modell | Endpunkt | Token |
 |---|---|---|---|
@@ -208,31 +249,27 @@ Postet der Nutzer eine Git-URL im Chat, schlaegt Claude proaktiv vor,
 das Repo per `/include-git-repository` zu klonen, fuehrt es aber erst
 nach Rueckfrage aus.
 
-## Codex / Gemini CLI (optional)
+## Codex / Antigravity / Claude upstream
 
-Im Container sind zusaetzlich die `codex`- und `gemini`-CLI installiert. Es
-gibt **keinen eigenen Login-Launcher mehr**: Der Login passiert beim ersten
-Aufruf der Skills `codex-delegator` bzw. `gemini-delegator`. Fehlt das Token,
-gibt der Skill den exakten `docker exec`-Befehl mit dem aktuellen Container-Namen
-aus (Format: `senity-workspace-<user>-<pid>`). Du fuehrst ihn in einem zweiten
-Terminal auf dem Host aus, etwa:
+Codex, Antigravity und Claude upstream laufen im selben Image und nutzen
+denselben Workspace-Mount. Der Login passiert direkt im jeweiligen Tool:
 
 ```bash
-docker exec -it senity-workspace-c4rtw-12345 codex login    # OpenAI / ChatGPT
-docker exec -it senity-workspace-c4rtw-12345 gemini         # Google
+./claude-senity.sh codex
+./claude-senity.sh antigravity
+./claude-senity.sh claude
 ```
 
-Nach dem OAuth-Flow landen die Anmeldedaten in `workspace/.codex/` bzw.
-`workspace/.gemini/` und bleiben ueber kuenftige Container-Starts erhalten.
-Einmal anmelden genuegt. Re-Login: `workspace/.codex/` bzw. `workspace/.gemini/`
-loeschen, beim naechsten Skill-Trigger meldet sich der Auth-Check wieder.
+Nach dem OAuth-/Login-Flow bleiben die Anmeldedaten in `workspace/.codex/`,
+`workspace/.gemini/` bzw. `workspace/.claude/` erhalten.
 
 ## Docker Image
 
 ```dockerfile
 FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y git openssh-client curl jq python3
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @anthropic-ai/claude-code@latest @openai/codex@latest
+RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /home/node/.local/bin
 ENV HOME=/workspace
 WORKDIR /workspace
 ENTRYPOINT ["/docker-entrypoint.sh"]
@@ -262,7 +299,7 @@ Image wird einmalig gebaut: `docker build --provenance=false -t senity-claude:la
 Die Senity-Farben sind auf zwei Ebenen aufgeteilt:
 
 - `senity-theme.conf` steuert Banner-Akzente und Build-Fallbacks.
-- `senity-theme.json` ist das native Claude-Code-Custom-Theme fuer CLI-Farb-Token und wird beim Containerstart nach `~/.claude/themes/senity.json` kopiert und als `custom:senity` aktiviert.
+- `senity-theme.json` ist das native Claude-Code-Custom-Theme fuer CLI-Farb-Token und wird beim Containerstart nach `~/.claude/themes/senity.json` kopiert. Fuer neue oder noch nicht initialisierte Configs ist `custom:senity` das Default-Theme.
 
 ```
 PRIMARY_256=99        # dunkles Senity-Lila
@@ -272,7 +309,7 @@ LINK_256=68           # Datei-/Ordner-/Weblinks im Terminal-Linkifier
 ```
 
 - `patch-claude-header.js` patcht beim Image-Build Branding-Strings ("Welcome back!" -> "Willkommen bei Senity!" etc.) und laengenerhaltende Fallback-Farbcodes im Claude-Code-Bundle.
-- `docker-entrypoint.sh` liest `senity-theme.conf` zur Laufzeit fuer das ASCII-Banner und installiert/aktiviert `senity-theme.json` als Custom-Theme.
+- `docker-entrypoint.sh` liest `senity-theme.conf` zur Laufzeit fuer das ASCII-Banner, installiert `senity-theme.json` als Custom-Theme und setzt es beim ersten/default Setup als Theme-Default.
 - `senity-mascot-filter.py` ersetzt den kompakten Claude-Code-Start-Mascot durch ein kleines Senity-Mascot und setzt zusaetzlich klickbare OSC-8-Links fuer Web-URLs und vorhandene Dateipfade (`/workspace/...`, relative Pfade, `.bindings`-Mounts), damit Strg+Klick im Terminal die Host-Datei oeffnet. Die sichtbare Linkfarbe kommt aus `LINK_RGB` in `senity-theme.conf`. Mit `--test-links` gibt der Launcher je einen Web-, Datei- und Ordnerlink aus.
 
 ### Klickbare Links / Warp
@@ -333,6 +370,20 @@ Aenderungen an `senity-theme.conf` benoetigen einen Image-Rebuild:
 ./claude-senity.sh --rebuild
 ```
 
+## Claude Code Updates beim Container-Start
+
+Der Entrypoint prueft bei jedem Start (Modi `senity` und `claude`), ob eine
+neuere `@anthropic-ai/claude-code`-Version auf npm existiert, und installiert
+sie in den node-eigenen Prefix `/opt/senity/npm`. Danach wird die ungebrandete
+Kopie fuer `claude-upstream` aktualisiert und im Senity-Modus der
+Branding-Patch auf die neue Version angewandt. Ein Image-Rebuild ist fuer
+neue Claude-Code-Versionen daher **nicht** noetig.
+
+- Ohne Netz: Warnung, Start mit der vorhandenen Version (Image-Fallback).
+- Abschalten: `SENITY_CLAUDE_UPDATE=0` als Env-Var setzen.
+- In-Session-Selbst-Update ist via `DISABLE_AUTOUPDATER=1` deaktiviert,
+  damit der Autoupdater den Senity-Branding-Patch nicht ueberschreibt.
+
 ## Image-Rebuild
 
 ```bash
@@ -340,7 +391,7 @@ Aenderungen an `senity-theme.conf` benoetigen einen Image-Rebuild:
 ./claude-senity.sh --rebuild
 ```
 
-Baut das Image neu und ersetzt `senity-claude:latest` erst nach erfolgreichem Build. Noetig nach Aenderungen an `Dockerfile`, `senity-theme.conf`, `patch-claude-header.js`, `senity-mascot-filter.py`, `senity-comfyui` oder `docker-entrypoint.sh`.
+Baut das Image neu und ersetzt `senity-claude:latest` erst nach erfolgreichem Build. Noetig nach Aenderungen an `Dockerfile`, `senity-theme.conf`, `patch-claude-header.js`, `senity-mascot-filter.py`, `senity-comfyui` oder `docker-entrypoint.sh`. Fuer neue Claude-Code-Versionen ist kein Rebuild noetig (Update laeuft beim Container-Start, siehe oben).
 
 ## Troubleshooting
 

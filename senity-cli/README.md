@@ -3,7 +3,9 @@
 Globaler `senity`-Befehl, der den Senity-Workspace-Container ad-hoc startet
 und das aktuelle Verzeichnis als `/workspace/cwd` mountet.
 
-Analog zu `claude`, `codex`, `gemini`: irgendwo `cd`, `senity` tippen, drin sein.
+Analog zu `claude`, `codex` und `agy`: irgendwo `cd`, `senity` tippen, drin sein.
+Default ist Senity Code; optional startet derselbe Container Claude upstream,
+Codex oder Antigravity.
 
 ## Installation
 
@@ -51,10 +53,23 @@ und Proxy-Key. Schreibt nach `~/.senity/.env` (Mode 600 auf Unix).
 ```bash
 cd ~/projekte/foo
 senity
+senity select
+senity claude
+senity codex
+senity antigravity
 ```
 
 Startet den Container, mountet `~/projekte/foo` als `/workspace/cwd`.
 Beim Exit ist der Container weg, der Ordner unveraendert.
+
+### Agents
+
+| Agent | Start | Auth |
+|---|---|---|
+| `senity` | `senity` oder `senity senity` | `senity login` / Senity Proxy |
+| `claude` | `senity claude` | Claude Login oder Anthropic Env-Vars |
+| `codex` | `senity codex` | Codex Login oder `OPENAI_API_KEY` |
+| `antigravity` | `senity antigravity` | Antigravity/Gemini Login oder `GOOGLE_API_KEY` |
 
 ### Optionen
 
@@ -107,7 +122,7 @@ Image existiert, faellt der Wrapper auf `senity-claude:latest` zurueck.
 ~/.senity/
 ├── .env                 # SENITY_CHAT_PROXY_URL + KEY (chmod 600)
 ├── mcp-config.json      # optional, User-globale MCP-Server (siehe mcp-config.example.json)
-├── workspace/           # persistentes /workspace im Container (Codex-Tokens, Claude-Settings, ...)
+├── workspace/           # persistentes /workspace im Container (Claude-, Codex-, Antigravity-Tokens)
 └── cache/
     ├── skills/          # Klon von murc134/Claude-Skills
     ├── commands/        # Klon von murc134/Claude-Commands

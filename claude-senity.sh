@@ -4,6 +4,10 @@
 #
 # Usage:
 #   ./claude-senity.sh                              # Senity Chat Proxy
+#   ./claude-senity.sh --select                     # Agent-Auswahl
+#   ./claude-senity.sh codex                        # Codex CLI starten
+#   ./claude-senity.sh antigravity                  # Antigravity CLI starten
+#   ./claude-senity.sh claude                       # Claude Code upstream starten
 #   ./claude-senity.sh --yolo                       # Mit Yolo-Mode
 #   ./claude-senity.sh --model claude-opus-4-7      # Modell ueberschreiben
 #   ./claude-senity.sh --comfyui                    # ComfyUI Server starten
@@ -281,6 +285,9 @@ launcher_self_update() {
 
 # ── Argumente parsen ──
 MODEL=""
+AGENT_MODE="senity"
+AGENT_MODE_EXPLICIT=false
+SELECT_AGENT=false
 YOLO=true
 REBUILD=false
 TEST_LINKS=false
@@ -295,6 +302,8 @@ EXTRA=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -m|--model)    MODEL="$2"; shift 2 ;;
+        --agent|--mode) AGENT_MODE="$2"; AGENT_MODE_EXPLICIT=true; shift 2 ;;
+        --select)      SELECT_AGENT=true; shift ;;
         --yolo)        YOLO=true; shift ;;
         --no-yolo)     YOLO=false; shift ;;
         --rebuild)     REBUILD=true; shift ;;
@@ -306,14 +315,72 @@ while [[ $# -gt 0 ]]; do
         --no-mouse-reporting) NO_MOUSE_REPORTING=true; shift ;;
         -h|--help)     SHOW_HELP=true; shift ;;
         --)            shift; EXTRA+=("$@"); break ;;
-        *)             EXTRA+=("$1"); shift ;;
+        *)
+            candidate="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+            if [[ "$AGENT_MODE_EXPLICIT" == false && "$candidate" =~ ^(senity|claude|codex|antigravity|agy|select)$ ]]; then
+                if [[ "$candidate" == "agy" ]]; then candidate="antigravity"; fi
+                if [[ "$candidate" == "select" ]]; then
+                    SELECT_AGENT=true
+                else
+                    AGENT_MODE="$candidate"
+                    AGENT_MODE_EXPLICIT=true
+                fi
+                shift
+            else
+                EXTRA+=("$1"); shift
+            fi
+            ;;
     esac
 done
+
+normalize_agent_mode() {
+    case "${1:-senity}" in
+        senity|claude|codex|antigravity) printf '%s' "$1" ;;
+        agy) printf '%s' "antigravity" ;;
+        *) exit_error "Unbekannter Agent-Modus: $1
+Erlaubt: senity, claude, codex, antigravity." ;;
+    esac
+}
+
+agent_label() {
+    case "$1" in
+        senity) printf '%s' "Senity Code (Claude Code + Senity Proxy)" ;;
+        claude) printf '%s' "Claude Code (Anthropic Auth/API)" ;;
+        codex) printf '%s' "Codex CLI" ;;
+        antigravity) printf '%s' "Antigravity CLI" ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
+select_agent_mode() {
+    echo ""
+    printf "  ${c_white}Agent auswaehlen:${c_reset}\n"
+    printf "  ${c_white}  1) Senity       Claude Code ueber Senity Proxy (Default: qwen3.6:35b)${c_reset}\n"
+    printf "  ${c_white}  2) Claude       Claude Code upstream mit Anthropic Login/API-Key${c_reset}\n"
+    printf "  ${c_white}  3) Codex        OpenAI Codex CLI${c_reset}\n"
+    printf "  ${c_white}  4) Antigravity  Google Antigravity CLI (agy)${c_reset}\n"
+    echo ""
+    read -r -p "  Auswahl [1]: " choice
+    case "$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')" in
+        ""|1|senity) printf '%s' "senity" ;;
+        2|claude) printf '%s' "claude" ;;
+        3|codex) printf '%s' "codex" ;;
+        4|antigravity|agy) printf '%s' "antigravity" ;;
+        *) exit_error "Ungueltige Auswahl: $choice" ;;
+    esac
+}
 
 # ── Banner ──
 # Launcher-Phase: Logo bewusst weiss (neutraler Setup-Look). Die farbige
 # Variante mit pink-Akzent erscheint erst beim Claude-Code-Start im Container
 # (docker-entrypoint.sh) -- das markiert visuell den Uebergang Host -> Senity.
+if [[ "$SELECT_AGENT" == true ]]; then
+    AGENT_MODE="$(select_agent_mode)"
+    AGENT_MODE_EXPLICIT=true
+fi
+AGENT_MODE="$(normalize_agent_mode "$AGENT_MODE")"
+AGENT_LABEL="$(agent_label "$AGENT_MODE")"
+
 c_white_bold=$'\033[1;37m'
 echo ""
 printf "   ${c_white_bold}███████╗███████╗███╗   ██╗██╗████████╗██╗   ██╗${c_reset}\n"
@@ -326,16 +393,18 @@ echo ""
 write_dbg "ScriptDir  : $SCRIPT_DIR"
 write_dbg "Shell      : $BASH_VERSION"
 write_dbg "User       : $(whoami)  PID: $$"
-write_dbg "Args       : Yolo=$YOLO Model=$MODEL ComfyUI=$COMFYUI"
+write_dbg "Args       : Agent=$AGENT_MODE Yolo=$YOLO Model=$MODEL ComfyUI=$COMFYUI"
 echo ""
 
 # ── Help ──
 if [[ "$SHOW_HELP" == true ]]; then
-    printf "  ${c_white}Usage: ./claude-senity.sh [OPTIONS]${c_reset}\n"
+    printf "  ${c_white}Usage: ./claude-senity.sh [agent] [OPTIONS] [-- tool-args...]${c_reset}\n"
     echo ""
-    printf "  ${c_white}Provider: Senity Chat Proxy (fest, kein anderer Provider verfuegbar)${c_reset}\n"
+    printf "  ${c_white}Agents: senity (Default), claude, codex, antigravity${c_reset}\n"
     echo ""
     printf "  ${c_white}Optionen:${c_reset}\n"
+    printf "  ${c_white}  --select       Interaktive Agent-Auswahl anzeigen${c_reset}\n"
+    printf "  ${c_white}  --agent NAME   Agent-Modus setzen: senity, claude, codex, antigravity${c_reset}\n"
     printf "  ${c_white}  --model NAME    Modell ueberschreiben (Default: Senity Proxy)${c_reset}\n"
     printf "  ${c_white}  --yolo          Yolo Mode (Default: an, Container ist isoliert)${c_reset}\n"
     printf "  ${c_white}  --no-yolo       Yolo Mode deaktivieren (Permission-Prompts)${c_reset}\n"
@@ -382,32 +451,35 @@ launcher_self_update
 # [2/6] .env laden + Credentials sicherstellen
 # ══════════════════════════════════════════════════════════════
 write_sep
-write_info "[2/6] Credentials (Senity Chat Proxy)..."
+write_info "[2/6] Credentials (${AGENT_LABEL})..."
 
 ENV_FILE="${SCRIPT_DIR}/.env"
 read_env_file "$ENV_FILE"
 
 default_url="https://sdr.senity.ai/api/claude-proxy"
+base_url=""
+token=""
 
-if [[ -f "$ENV_FILE" ]]; then
-    write_ok ".env gefunden: $ENV_FILE"
-else
-    write_info ".env existiert noch nicht — wird beim ersten gueltigen Key angelegt"
-fi
+if [[ "$AGENT_MODE" == "senity" ]]; then
+    if [[ -f "$ENV_FILE" ]]; then
+        write_ok ".env gefunden: $ENV_FILE"
+    else
+        write_info ".env existiert noch nicht — wird beim ersten gueltigen Key angelegt"
+    fi
 
-# URL: aus .env, sonst Env-Var, sonst Default
-base_url="${_env_SENITY_CHAT_PROXY_URL:-${SENITY_CHAT_PROXY_URL:-$default_url}}"
+    # URL: aus .env, sonst Env-Var, sonst Default
+    base_url="${_env_SENITY_CHAT_PROXY_URL:-${SENITY_CHAT_PROXY_URL:-$default_url}}"
 
-# Key: aus .env, sonst Env-Var
-token="${_env_SENITY_CHAT_PROXY_KEY:-${SENITY_CHAT_PROXY_KEY:-}}"
+    # Key: aus .env, sonst Env-Var
+    token="${_env_SENITY_CHAT_PROXY_KEY:-${SENITY_CHAT_PROXY_KEY:-}}"
 
-key_ok=false
-attempts=0
-max_attempts=3
-should_persist=false
+    key_ok=false
+    attempts=0
+    max_attempts=3
+    should_persist=false
 
-while [[ "$key_ok" == false ]]; do
-    if [[ -z "$token" ]]; then
+    while [[ "$key_ok" == false ]]; do
+        if [[ -z "$token" ]]; then
         echo ""
         write_info "SENITY_CHAT_PROXY_KEY ist nicht gesetzt."
         echo ""
@@ -424,15 +496,15 @@ while [[ "$key_ok" == false ]]; do
         if [[ -z "$token" ]]; then
             exit_error "Kein Key eingegeben. Abbruch."
         fi
-    fi
+        fi
 
-    write_info "Validiere Key gegen $base_url ..."
-    set +e
-    validate_senity_key "$base_url" "$token"
-    rc=$?
-    set -e
+        write_info "Validiere Key gegen $base_url ..."
+        set +e
+        validate_senity_key "$base_url" "$token"
+        rc=$?
+        set -e
 
-    case "$rc" in
+        case "$rc" in
         0)
             write_ok "Key valide (Auth OK)"
             if [[ "$base_url" == http://* && "$base_url" != http://localhost* && "$base_url" != http://127.* ]]; then
@@ -479,22 +551,33 @@ while [[ "$key_ok" == false ]]; do
             token=""
             should_persist=true
             ;;
-    esac
-done
+        esac
+    done
+else
+    write_ok "Keine Senity-Proxy-Credentials erforderlich fuer ${AGENT_LABEL}."
+fi
 
 # Modell
 default_model="qwen3.6:35b"
 default_model_label="Senity Proxy"
-if [[ -z "$MODEL" ]]; then MODEL="$default_model"; fi
-if [[ "$MODEL" == "$default_model" ]]; then
+if [[ "$AGENT_MODE" == "senity" && -z "$MODEL" ]]; then MODEL="$default_model"; fi
+if [[ "$AGENT_MODE" == "senity" && "$MODEL" == "$default_model" ]]; then
     model_label="${default_model_label} (${default_model})"
-else
+elif [[ -n "$MODEL" ]]; then
     model_label="$MODEL"
+else
+    model_label="Tool-Default"
 fi
-write_ok "Modell: $model_label"
+if [[ "$AGENT_MODE" == "senity" || -n "$MODEL" ]]; then
+    write_ok "Modell: $model_label"
+fi
 
 # Yolo
-write_ok "Yolo-Mode: $YOLO$(if [[ "$YOLO" == true ]]; then echo '  (Skip-Permissions aktiv, Container isoliert)'; fi)"
+if [[ "$AGENT_MODE" == "senity" || "$AGENT_MODE" == "claude" ]]; then
+    write_ok "Yolo-Mode: $YOLO$(if [[ "$YOLO" == true ]]; then echo '  (Skip-Permissions aktiv, Container isoliert)'; fi)"
+else
+    write_ok "Yolo-Mode: nicht angewendet fuer ${AGENT_LABEL}"
+fi
 
 safe_user="$(whoami | tr -cd 'a-zA-Z0-9_.-' | tr '[:upper:]' '[:lower:]')"
 
@@ -1241,8 +1324,7 @@ link_path_map_json="$(build_link_path_map_json)"
 strip_mouse_reporting="auto"
 if [[ "$MOUSE_REPORTING" == true ]]; then strip_mouse_reporting="0"; fi
 if [[ "$NO_MOUSE_REPORTING" == true ]]; then strip_mouse_reporting="1"; fi
-DOCKER_ARGS+=(-e "ANTHROPIC_BASE_URL=${base_url}")
-DOCKER_ARGS+=(-e "ANTHROPIC_API_KEY=${token}")
+DOCKER_ARGS+=(-e "SENITY_AGENT_MODE=${AGENT_MODE}")
 DOCKER_ARGS+=(-e "HOME=/workspace")
 DOCKER_ARGS+=(-e "TERM=xterm-256color")
 DOCKER_ARGS+=(-e "SENITY_HOST_TERM_PROGRAM=${TERM_PROGRAM:-}")
@@ -1251,6 +1333,33 @@ DOCKER_ARGS+=(-e "SENITY_FILE_LINK_FORMAT=${SENITY_FILE_LINK_FORMAT:-}")
 DOCKER_ARGS+=(-e "SENITY_VISIBLE_HOST_PATHS=${SENITY_VISIBLE_HOST_PATHS:-}")
 DOCKER_ARGS+=(-e "SENITY_LINKIFY=1")
 DOCKER_ARGS+=(-e "SENITY_LINK_PATH_MAP=${link_path_map_json}")
+if [[ "$AGENT_MODE" == "senity" ]]; then
+    DOCKER_ARGS+=(-e "SENITY_CHAT_PROXY_URL=${base_url}")
+    DOCKER_ARGS+=(-e "SENITY_CHAT_PROXY_KEY=${token}")
+    DOCKER_ARGS+=(-e "ANTHROPIC_BASE_URL=${base_url}")
+    DOCKER_ARGS+=(-e "ANTHROPIC_API_KEY=${token}")
+else
+    DOCKER_ARGS+=(-e "SENITY_NO_BANNER=1")
+    DOCKER_ARGS+=(-e "SENITY_MODEL_SYNC=0")
+    DOCKER_ARGS+=(-e "SENITY_THEME_DEFAULT=0")
+    for env_name in \
+        ANTHROPIC_API_KEY \
+        ANTHROPIC_AUTH_TOKEN \
+        ANTHROPIC_BASE_URL \
+        ANTHROPIC_MODEL \
+        ANTHROPIC_DEFAULT_OPUS_MODEL \
+        ANTHROPIC_DEFAULT_SONNET_MODEL \
+        ANTHROPIC_DEFAULT_HAIKU_MODEL \
+        ANTHROPIC_DEFAULT_FABLE_MODEL \
+        CLAUDE_CODE_OAUTH_TOKEN \
+        OPENAI_API_KEY \
+        GOOGLE_API_KEY; do
+        env_value="${!env_name:-}"
+        if [[ -n "$env_value" ]]; then
+            DOCKER_ARGS+=(-e "${env_name}=${env_value}")
+        fi
+    done
+fi
 if [[ "$COMFYUI" == true ]]; then
     DOCKER_ARGS+=(-p "127.0.0.1:${COMFYUI_PORT}:8188")
     DOCKER_ARGS+=(-e "SENITY_COMFYUI_PORT=8188")
@@ -1261,10 +1370,13 @@ if [[ "$COMFYUI" == true ]]; then
     fi
 fi
 
-# Claude-Argumente
-CLAUDE_ARGS=("senity-mascot-filter" "claude" "--model" "$MODEL")
-if [[ "$YOLO" == true ]]; then
-    CLAUDE_ARGS+=("--dangerously-skip-permissions")
+# Tool-Argumente
+AGENT_ARGS=()
+if [[ -n "$MODEL" ]]; then
+    AGENT_ARGS+=("--model" "$MODEL")
+fi
+if [[ ( "$AGENT_MODE" == "senity" || "$AGENT_MODE" == "claude" ) && "$YOLO" == true ]]; then
+    AGENT_ARGS+=("--dangerously-skip-permissions")
 fi
 
 # INITIAL_PROMPT.md dynamisch einlesen (bei jedem Start neu, kein Rebuild noetig).
@@ -1276,7 +1388,7 @@ fi
 # geschrieben und Claude startet ohne automatische Nachricht.
 # Im ComfyUI-Modus wird grundsaetzlich kein Claude-Initial-Prompt geschrieben.
 has_user_prompt=false
-if [[ "$COMFYUI" == true ]]; then
+if [[ "$COMFYUI" == true || "$AGENT_MODE" != "senity" ]]; then
     has_user_prompt=true
 elif [[ ${#EXTRA[@]} -gt 0 ]]; then
     for e in "${EXTRA[@]}"; do
@@ -1308,9 +1420,9 @@ if [[ "$has_user_prompt" == false ]]; then
     fi
 fi
 
-# Hinweis: Der Codex-/Gemini-Login passiert NICHT mehr hier im Launcher.
-# Wer Codex/Gemini im Container nutzen will, fuehrt einmalig das separate
-# Script aus:  ./codex-gemini-login.sh   (Windows: codex-gemini-login.bat)
+# Codex-, Claude- und Antigravity-Logins passieren im jeweiligen Tool. Durch
+# HOME=/workspace landen Tokens persistent in workspace/.codex, workspace/.claude
+# bzw. workspace/.gemini.
 
 # ══════════════════════════════════════════════════════════════
 # [6/6] Container starten
@@ -1326,10 +1438,16 @@ if [[ "$COMFYUI" == true ]]; then
     printf "  ${c_white}Modelle   : workspace/.comfyui/models${c_reset}\n"
     printf "  ${c_white}GPU       : %s${c_reset}\n" "$COMFYUI_GPU"
 else
-    printf "  ${c_white}Provider  : Senity Chat Proxy${c_reset}\n"
-    printf "  ${c_white}URL       : %s${c_reset}\n" "$base_url"
-    printf "  ${c_white}Modell    : %s${c_reset}\n" "$model_label"
-    printf "  ${c_white}Yolo      : %s${c_reset}\n" "$YOLO"
+    printf "  ${c_white}Agent     : %s${c_reset}\n" "$AGENT_LABEL"
+    if [[ "$AGENT_MODE" == "senity" ]]; then
+        printf "  ${c_white}URL       : %s${c_reset}\n" "$base_url"
+        printf "  ${c_white}Modell    : %s${c_reset}\n" "$model_label"
+    elif [[ -n "$MODEL" ]]; then
+        printf "  ${c_white}Modell    : %s${c_reset}\n" "$MODEL"
+    fi
+    if [[ "$AGENT_MODE" == "senity" || "$AGENT_MODE" == "claude" ]]; then
+        printf "  ${c_white}Yolo      : %s${c_reset}\n" "$YOLO"
+    fi
 fi
 printf "  ${c_white}Container : %s${c_reset}\n" "$container_name"
 printf "  ${c_magenta}════════════════════════════════════════════${c_reset}\n"
@@ -1367,17 +1485,31 @@ fi
 if [[ "$COMFYUI" == true ]]; then
     printf "  ${c_green}Starte ComfyUI... (Ctrl+C zum Beenden)${c_reset}\n"
 else
-    printf "  ${c_green}Starte Claude Code... (Ctrl+C zum Beenden)${c_reset}\n"
+    printf "  ${c_green}Starte %s... (Ctrl+C zum Beenden)${c_reset}\n" "$AGENT_LABEL"
 fi
 echo ""
 
 set +e
 if [[ "$COMFYUI" == true ]]; then
     docker run "${DOCKER_ARGS[@]}" senity-claude:latest senity-comfyui "${EXTRA[@]}"
-elif [[ ${#EXTRA[@]} -gt 0 ]]; then
-    docker run "${DOCKER_ARGS[@]}" senity-claude:latest "${CLAUDE_ARGS[@]}" "${EXTRA[@]}"
 else
-    docker run "${DOCKER_ARGS[@]}" senity-claude:latest "${CLAUDE_ARGS[@]}"
+    case "$AGENT_MODE" in
+        senity)
+            docker run "${DOCKER_ARGS[@]}" senity-claude:latest senity-mascot-filter claude "${AGENT_ARGS[@]}" "${EXTRA[@]}"
+            ;;
+        claude)
+            docker run "${DOCKER_ARGS[@]}" senity-claude:latest claude-upstream "${AGENT_ARGS[@]}" "${EXTRA[@]}"
+            ;;
+        codex)
+            docker run "${DOCKER_ARGS[@]}" senity-claude:latest codex "${AGENT_ARGS[@]}" "${EXTRA[@]}"
+            ;;
+        antigravity)
+            docker run "${DOCKER_ARGS[@]}" senity-claude:latest agy "${AGENT_ARGS[@]}" "${EXTRA[@]}"
+            ;;
+        *)
+            exit_error "Unbekannter Agent-Modus: $AGENT_MODE"
+            ;;
+    esac
 fi
 container_exit=$?
 set -e
@@ -1387,7 +1519,7 @@ if [[ $container_exit -eq 0 || $container_exit -eq 130 ]]; then
     if [[ "$COMFYUI" == true ]]; then
         write_ok "ComfyUI beendet (Exit: $container_exit)"
     else
-        write_ok "Claude Code beendet (Exit: $container_exit)"
+        write_ok "${AGENT_LABEL} beendet (Exit: $container_exit)"
     fi
 else
     write_fail "Container beendet mit Exit-Code: $container_exit"

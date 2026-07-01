@@ -1,6 +1,7 @@
-# Senity Workspace — Claude Code Docker-Wrapper
+# Senity Workspace — Docker-Agent-Launcher
 
-Startet Claude Code in einem isolierten Docker-Container (`senity-claude:latest`)
+Startet Senity Code, Claude Code upstream, Codex oder Antigravity in einem
+isolierten Docker-Container (`senity-claude:latest`). Default ist Senity Code
 gegen den **Senity Chat Proxy**. Cross-Platform: Windows, Linux, macOS.
 Anwender-Doku steht in `README.md` — diese Datei ist die Entwickler-Referenz für
 das Repo-Setup, das vor jedem Container-Start läuft.
@@ -14,7 +15,9 @@ das Repo-Setup, das vor jedem Container-Start läuft.
 | `.env` | Gitignored: Proxy-Credentials (`SENITY_CHAT_PROXY_URL`, `SENITY_CHAT_PROXY_KEY`) |
 | `INITIAL_PROMPT.md` | Wird bei jedem Start gelesen und Claude Code via `--append-system-prompt` mitgegeben |
 | `.bindings` | Committet als initialer Zustand. Launcher setzt einmalig `git update-index --skip-worktree`, danach erscheinen lokale Edits (interaktiver Workspace-Pfad, eigene Mounts) nicht mehr im `git status` |
-Die `.sh`/`.ps1`/`.bat` müssen funktional **gleichwertig** bleiben. Die `.bat`
+Die `.sh`/`.ps1`/`.bat` müssen funktional **gleichwertig** bleiben. Agent-Modi:
+`senity` (Default), `claude`, `codex`, `antigravity`, plus `--select`/`select`.
+Die `.bat`
 ist ein reiner pwsh-Bootstrap — sie ruft `claude-senity.ps1 %*` auf und enthält
 selbst keine Launcher-Logik; jede `.ps1`-Änderung wirkt automatisch auch über
 die `.bat`.
@@ -140,27 +143,35 @@ Docker einen geschachtelten File-Mount in einen bereits gemounteten Pfad nicht
 über virtiofs zustellen kann. Die Sync-Lösung umgeht das ohne nested mount und
 funktioniert plattformübergreifend.
 
-## Codex- und Gemini-CLI im Container
+## Agent-CLIs im Container
 
-Das Image installiert zusätzlich zur Claude Code CLI auch `@openai/codex` und
-`@google/gemini-cli` (jeweils soft-fail, falls npm-Registry temporär nicht
-erreichbar ist). Beide melden sich per **OAuth** an (kein API-Key, keine
-Kosten), Tokens landen unter `$HOME/.codex/` bzw. `$HOME/.gemini/` und
-persistieren automatisch über den `/workspace`-Mount.
+Das Image installiert Claude Code (`claude` plus unveraenderte Paket-Kopie
+unter `/opt/senity/claude-upstream`, gestartet über den Wrapper
+`/usr/local/bin/claude-upstream`), `@openai/codex` und Google Antigravity
+(`agy`, soft-fail falls der Download temporär nicht erreichbar ist). Globale
+npm-Pakete liegen im node-eigenen Prefix `/opt/senity/npm` (via
+`NPM_CONFIG_PREFIX`, PATH-vorrangig vor `/usr/local/bin`), damit der
+Entrypoint sie als `USER node` aktualisieren kann. Tokens landen unter
+`$HOME/.claude/`, `$HOME/.codex/` bzw. `$HOME/.gemini/` und persistieren
+automatisch über den `/workspace`-Mount.
 
-**Login: lazy beim ersten Skill-Aufruf, nicht separat.** Es gibt keinen
-eigenständigen Login-Launcher mehr. Die Skills `codex-delegator` und
-`gemini-delegator` (Repo `murc134/Claude-Skills`) prüfen vor dem ersten
-Aufruf, ob `/workspace/.codex/auth.json` bzw. `/workspace/.gemini/oauth_creds.json`
-existiert. Fehlt das Token, instruiert der Skill den User: in einem zweiten
-Terminal `docker exec -it <container> codex login` (bzw. `gemini`) ausführen
-(Container-Name kommt vom Skill aus `$HOSTNAME` mit), OAuth-Flow durchklicken,
-danach Skill erneut anstoßen. Tokens bleiben über den
-`/workspace`-Mount persistent — einmal anmelden, alle künftigen Container-Starts
-sind authentifiziert.
+**Start-Update (Ticket #2428):** Bei jedem Container-Start in den Modi
+`senity`/`claude` prüft der Entrypoint via `npm view` (Timeout 15 s), ob eine
+neuere Claude-Code-Version existiert, installiert sie nach `/opt/senity/npm`,
+synchronisiert die ungepatchte `claude-upstream`-Kopie und wendet im
+Senity-Modus den Branding-Patch (`/usr/local/lib/senity/patch-claude-header.js`,
+Marker `/opt/senity/.senity-patched-version`) erneut an. Offline oder bei
+Fehlern: Warnung, Start mit der vorhandenen Version. Opt-out per
+`SENITY_CLAUDE_UPDATE=0`. `DISABLE_AUTOUPDATER=1` im Image verhindert, dass
+der In-Session-Autoupdater den Branding-Patch überschreibt.
 
-Re-Login: `workspace/.codex/` bzw. `workspace/.gemini/` löschen, beim nächsten
-Skill-Trigger triggert der Auth-Check den Login-Hinweis erneut.
+Direkte Starts:
+`./claude-senity.sh senity`, `./claude-senity.sh claude`,
+`./claude-senity.sh codex`, `./claude-senity.sh antigravity`
+bzw. global `senity select|claude|codex|antigravity`.
+
+Re-Login: `workspace/.claude/`, `workspace/.codex/` bzw. `workspace/.gemini/`
+löschen, dann den passenden Agent erneut starten.
 
 ## MCP-Server-Sync
 

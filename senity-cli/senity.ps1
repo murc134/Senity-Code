@@ -9,7 +9,11 @@
 #   - Yolo:         an. -NoYolo deaktiviert.
 #
 # Usage:
-#   senity                      Container starten
+#   senity                      Container starten, Senity Code an
+#   senity select               Agent-Auswahl anzeigen
+#   senity codex                Codex CLI starten
+#   senity claude               Claude Code upstream starten
+#   senity antigravity          Antigravity CLI starten
 #   senity -SkipUpdate          Ohne docker pull / git pull
 #   senity -NoYolo              Permission-Prompts an
 #   senity -Mount H:C[:ro]      Zusatz-Mount (mehrfach)
@@ -77,16 +81,69 @@ function Write-Log  ([string]$Msg) { Write-Host "[senity] $Msg" -ForegroundColor
 function Write-Warn2([string]$Msg) { Write-Host "[senity] $Msg" -ForegroundColor Yellow }
 function Write-Err2 ([string]$Msg) { Write-Host "[senity] $Msg" -ForegroundColor Red }
 
+function Normalize-AgentMode([string]$Mode) {
+    $m = if ($Mode) { $Mode.ToLowerInvariant() } else { "senity" }
+    switch ($m) {
+        "senity"      { return "senity" }
+        "claude"      { return "claude" }
+        "codex"       { return "codex" }
+        "antigravity" { return "antigravity" }
+        "agy"         { return "antigravity" }
+        default       { Write-Err2 "Unbekannter Agent-Modus: $Mode"; exit 1 }
+    }
+}
+
+function Get-AgentLabel([string]$Mode) {
+    switch ($Mode) {
+        "senity"      { return "Senity Code (Claude Code + Senity Proxy)" }
+        "claude"      { return "Claude Code (Anthropic Auth/API)" }
+        "codex"       { return "Codex CLI" }
+        "antigravity" { return "Antigravity CLI" }
+        default       { return $Mode }
+    }
+}
+
+function Select-AgentMode {
+    Write-Host ""
+    Write-Host "Agent auswaehlen:" -ForegroundColor White
+    Write-Host "  1) Senity       Claude Code ueber Senity Proxy (Default: qwen3.6:35b)" -ForegroundColor White
+    Write-Host "  2) Claude       Claude Code upstream mit Anthropic Login/API-Key" -ForegroundColor White
+    Write-Host "  3) Codex        OpenAI Codex CLI" -ForegroundColor White
+    Write-Host "  4) Antigravity  Google Antigravity CLI (agy)" -ForegroundColor White
+    Write-Host ""
+    $choice = Read-Host "Auswahl [1]"
+    switch (($choice.Trim()).ToLowerInvariant()) {
+        ""             { return "senity" }
+        "1"            { return "senity" }
+        "senity"       { return "senity" }
+        "2"            { return "claude" }
+        "claude"       { return "claude" }
+        "3"            { return "codex" }
+        "codex"        { return "codex" }
+        "4"            { return "antigravity" }
+        "antigravity"  { return "antigravity" }
+        "agy"          { return "antigravity" }
+        default        { Write-Err2 "Ungueltige Auswahl: $choice"; exit 1 }
+    }
+}
+
 # ---- Help -------------------------------------------------------------------
 function Show-Help {
     @"
 senity - Senity-Workspace-Container auf Knopfdruck
 
 USAGE
-  senity [options] [-- claude-args...]
+  senity [agent] [options] [-- tool-args...]
   senity login
   senity comfyui [-- comfyui-args...]
   senity -h
+
+AGENTS
+  senity               Claude Code ueber Senity Proxy (Default: qwen3.6:35b)
+  claude               Claude Code upstream mit Anthropic Login/API-Key
+  codex                OpenAI Codex CLI
+  antigravity          Google Antigravity CLI (agy)
+  select               Interaktive Auswahl
 
 OPTIONS
   -SkipUpdate           Ueberspringt docker pull + git pull beim Start
@@ -100,7 +157,7 @@ OPTIONS
 
 SUBCOMMANDS
   login                 Senity-Proxy-Key in ~/.senity/.env hinterlegen
-  comfyui               ComfyUI statt Claude Code starten
+  comfyui               ComfyUI statt Agent starten
   gitea-login           OAuth2 Device-Flow gegen git.senity.ai (Browser-Login)
                         Flags: -Headless (Env SENITY_GITEA_RT)
   gitea-token           Frischen Access-Token sicherstellen / ausgeben
@@ -123,13 +180,28 @@ if ($ComfyUIPort -lt 1 -or $ComfyUIPort -gt 65535) {
 # ---- Subcommand extrahieren -------------------------------------------------
 $KnownSubs = @("login", "gitea-login", "gitea-token", "gitea-status", "gitea-logout")
 $Subcommand = ""
+$AgentMode = "senity"
 $ClaudeArgs = @()
 $afterSeparator = $false
 foreach ($arg in $Rest) {
     if (-not $afterSeparator -and $arg -eq "--") { $afterSeparator = $true; continue }
     if (-not $afterSeparator -and $Subcommand -eq "" -and ($arg -eq "comfyui" -or $KnownSubs -contains $arg)) { $Subcommand = $arg; continue }
+    if (-not $afterSeparator -and $Subcommand -eq "" -and $AgentMode -eq "senity" -and @("senity","claude","codex","antigravity","agy","select") -contains $arg) {
+        switch ($arg) {
+            "senity"      { $AgentMode = "senity" }
+            "claude"      { $AgentMode = "claude" }
+            "codex"       { $AgentMode = "codex" }
+            "antigravity" { $AgentMode = "antigravity" }
+            "agy"         { $AgentMode = "antigravity" }
+            "select"      { $AgentMode = Select-AgentMode }
+        }
+        continue
+    }
     $ClaudeArgs += $arg
 }
+
+$AgentMode = Normalize-AgentMode $AgentMode
+$AgentLabel = Get-AgentLabel $AgentMode
 
 if (-not $Image) { $Image = $DefaultImage }
 
@@ -279,14 +351,41 @@ function Invoke-Container([hashtable]$Env, [string]$Mode = "claude") {
     $dockerArgs = @(
         "run", "--rm", "-it",
         "--name", $containerName,
-        "-e", "SENITY_CHAT_PROXY_URL=$($Env.SENITY_CHAT_PROXY_URL)",
-        "-e", "SENITY_CHAT_PROXY_KEY=$($Env.SENITY_CHAT_PROXY_KEY)",
-        "-e", "ANTHROPIC_BASE_URL=$($Env.SENITY_CHAT_PROXY_URL)",
-        "-e", "ANTHROPIC_API_KEY=$($Env.SENITY_CHAT_PROXY_KEY)",
+        "-e", "SENITY_AGENT_MODE=$AgentMode",
         "-e", "TERM=xterm-256color",
         "-v", "$($SenityWsDir):/workspace",
         "-v", "$($cwd):/workspace/cwd"
     )
+    if ($AgentMode -eq "senity") {
+        $dockerArgs += @(
+            "-e", "SENITY_CHAT_PROXY_URL=$($Env.SENITY_CHAT_PROXY_URL)",
+            "-e", "SENITY_CHAT_PROXY_KEY=$($Env.SENITY_CHAT_PROXY_KEY)",
+            "-e", "ANTHROPIC_BASE_URL=$($Env.SENITY_CHAT_PROXY_URL)",
+            "-e", "ANTHROPIC_API_KEY=$($Env.SENITY_CHAT_PROXY_KEY)"
+        )
+    } else {
+        $dockerArgs += @(
+            "-e", "SENITY_NO_BANNER=1",
+            "-e", "SENITY_MODEL_SYNC=0",
+            "-e", "SENITY_THEME_DEFAULT=0"
+        )
+        foreach ($envName in @(
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "OPENAI_API_KEY",
+            "GOOGLE_API_KEY"
+        )) {
+            $envValue = [Environment]::GetEnvironmentVariable($envName)
+            if ($envValue) { $dockerArgs += @("-e", "$envName=$envValue") }
+        }
+    }
     if ($isComfyUI) {
         $dockerArgs += @(
             "-p", "127.0.0.1:${ComfyUIPort}:8188",
@@ -319,8 +418,27 @@ function Invoke-Container([hashtable]$Env, [string]$Mode = "claude") {
         $dockerArgs += "senity-comfyui"
         foreach ($a in $ClaudeArgs) { if ($a) { $dockerArgs += $a } }
     } else {
-        $dockerArgs += @("senity-mascot-filter", "claude")
-        if (-not $NoYolo) { $dockerArgs += "--dangerously-skip-permissions" }
+        Write-Log "Starte $AgentLabel"
+        switch ($AgentMode) {
+            "senity" {
+                $dockerArgs += @("senity-mascot-filter", "claude")
+                if (-not $NoYolo) { $dockerArgs += "--dangerously-skip-permissions" }
+            }
+            "claude" {
+                $dockerArgs += "claude-upstream"
+                if (-not $NoYolo) { $dockerArgs += "--dangerously-skip-permissions" }
+            }
+            "codex" {
+                $dockerArgs += "codex"
+            }
+            "antigravity" {
+                $dockerArgs += "agy"
+            }
+            default {
+                Write-Err2 "Unbekannter Agent-Modus: $AgentMode"
+                exit 1
+            }
+        }
         foreach ($a in $ClaudeArgs) { if ($a) { $dockerArgs += $a } }
     }
 
@@ -490,7 +608,7 @@ switch ($Subcommand) {
 
 Test-Docker
 Initialize-Dirs
-if ($Subcommand -eq "comfyui") {
+if ($Subcommand -eq "comfyui" -or $AgentMode -ne "senity") {
     $envData = Read-EnvFile
     if (-not $envData.SENITY_CHAT_PROXY_URL) { $envData.SENITY_CHAT_PROXY_URL = $DefaultProxyUrl }
     if (-not $envData.SENITY_CHAT_PROXY_KEY) { $envData.SENITY_CHAT_PROXY_KEY = "" }
