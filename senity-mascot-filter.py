@@ -117,21 +117,74 @@ OSC_TITLE_RE = re.compile(
 # Wir ersetzen nur den linken 11-Zellen-Bereich und behalten den Rest.
 COMPACT_MASCOT_WIDTH = 11
 COMPACT_MASCOT_GLYPHS = set("▐▛█▜▌▝▘")
-COMPACT_SENITY_MASCOT = (
-    " ▐█████▌   ",
-    "▝▜██●██▛▘  ",
-    "  ▘SEN▝▘   ",
-)
 COMPACT_CLAUDE_MASCOT = (
     " ▐▛███▜▌   ",
     "▝▜█████▛▘  ",
     "  ▘▘ ▝▝    ",
 )
-MASCOT_RGB = os.environ.get("SENITY_MASCOT_RGB") or THEME_VALUES.get("PRIMARY_RGB") or "135;95;175"
-if not re.match(r"^\d{1,3};\d{1,3};\d{1,3}$", MASCOT_RGB):
-    MASCOT_RGB = "135;95;175"
-SENITY_MASCOT_COLOR = os.environ.get("SENITY_MASCOT_COLOR", f"\x1b[38;2;{MASCOT_RGB}m")
-SENITY_MASCOT_RESET = "\x1b[0m"
+
+# Senity-Head-Logo als 11x6-Pixel-Konstellation (Ticket #2435), abgeleitet aus
+# den Kreis-Koordinaten von "Senity head black.svg" (569x557 -> 11x6 Raster).
+# Jede Terminalzelle traegt zwei vertikale Pixel via Halbblock-Trick: bei zwei
+# verschiedenfarbigen Pixeln faerbt Foreground die obere Haelfte (Zeichen
+# U+2580 OBERE HALBE BLOCKZELLE) und Background die untere. Pixel-Codes:
+# b = Blau, p = Pink, v = Violett, Space = leer.
+SENITY_HEAD_PIXELS = (
+    "   b p     ",
+    "b    v     ",
+    "b b vp  p  ",
+    "  b   v v  ",
+    "   b v     ",
+    "    b      ",
+)
+
+_MASCOT_RGB_RE = re.compile(r"^\d{1,3};\d{1,3};\d{1,3}$")
+
+
+def _mascot_rgb(key: str, default: str) -> str:
+    val = os.environ.get(f"SENITY_{key}") or THEME_VALUES.get(key) or default
+    if not _MASCOT_RGB_RE.match(val):
+        val = default
+    return val
+
+
+# Markenfarben des Senity-Heads (theme-/env-ueberschreibbar):
+# Blau #33378C, Pink #E5007E, Violett #694C99.
+MASCOT_PIXEL_COLORS = {
+    "b": _mascot_rgb("MASCOT_BLUE_RGB", "51;55;140"),
+    "p": _mascot_rgb("MASCOT_PINK_RGB", "229;0;126"),
+    "v": _mascot_rgb("MASCOT_PURPLE_RGB", "105;76;153"),
+}
+
+
+def _render_senity_head(pixels):
+    """
+    Kompiliert die Pixel-Map zu drei vorgefaerbten Terminal-Zeilen mit exakt
+    COMPACT_MASCOT_WIDTH sichtbaren Zellen. Jede Zelle traegt ihren eigenen
+    SGR-Reset, damit keine Farbe in den nachfolgenden Header-Text blutet.
+    """
+    lines = []
+    for top_row, bot_row in zip(pixels[0::2], pixels[1::2]):
+        cells = []
+        for top, bot in zip(top_row, bot_row):
+            top_rgb = MASCOT_PIXEL_COLORS.get(top)
+            bot_rgb = MASCOT_PIXEL_COLORS.get(bot)
+            if top_rgb is None and bot_rgb is None:
+                cells.append(" ")
+            elif bot_rgb is None:
+                cells.append(f"\x1b[38;2;{top_rgb}m▀\x1b[0m")
+            elif top_rgb is None:
+                cells.append(f"\x1b[38;2;{bot_rgb}m▄\x1b[0m")
+            elif top_rgb == bot_rgb:
+                cells.append(f"\x1b[38;2;{top_rgb}m█\x1b[0m")
+            else:
+                cells.append(f"\x1b[38;2;{top_rgb};48;2;{bot_rgb}m▀\x1b[0m")
+        lines.append("".join(cells))
+    return tuple(lines)
+
+
+# Vorgefaerbte Zeilen (enthalten bereits alle ANSI-Sequenzen und Resets).
+COMPACT_SENITY_MASCOT = _render_senity_head(SENITY_HEAD_PIXELS)
 
 # Terminal-Hyperlinks: OSC 8. Der Filter laeuft im Container, das Terminal
 # sitzt aber auf dem Host. Deshalb bekommt er vom Launcher eine Mapping-Liste
@@ -676,12 +729,9 @@ def rewrite_titles_in_chunk(chunk: bytes) -> bytes:
             lambda m: m.group(1) + SENITY_CODE + m.group(2), chunk
         )
     if COMPACT_CLAUDE_MASCOT[0].encode("utf-8") in chunk:
+        # COMPACT_SENITY_MASCOT-Zeilen sind bereits vorgefaerbt (inkl. Resets).
         for old, new in zip(COMPACT_CLAUDE_MASCOT, COMPACT_SENITY_MASCOT):
-            chunk = chunk.replace(
-                old.encode("utf-8"),
-                f"{SENITY_MASCOT_COLOR}{new}{SENITY_MASCOT_RESET}".encode("utf-8"),
-                1,
-            )
+            chunk = chunk.replace(old.encode("utf-8"), new.encode("utf-8"), 1)
         chunk = chunk.replace(CLAUDE_CODE, SENITY_CODE, 1)
     return chunk
 
@@ -794,8 +844,8 @@ def try_rewrite_compact_mascot(raw_line: bytes):
     rest = plain[COMPACT_MASCOT_WIDTH:] if len(plain) >= COMPACT_MASCOT_WIDTH else ""
     if line_idx == 0:
         rest = rest.replace("Claude Code", NEW_PRODUCT, 1)
-    prefix = COMPACT_SENITY_MASCOT[line_idx]
-    rendered = f"{SENITY_MASCOT_COLOR}{prefix}{SENITY_MASCOT_RESET}{rest}"
+    # Vorgefaerbte Mascot-Zeile (inkl. eigener SGR-Resets) plus Resttext.
+    rendered = f"{COMPACT_SENITY_MASCOT[line_idx]}{rest}"
     return rendered.encode("utf-8") + ending
 
 
