@@ -411,8 +411,8 @@ function Update-Repo([string]$Url, [string]$Dest) {
 
 function Invoke-Update {
     Write-Log "Update laeuft (-SkipUpdate zum Ueberspringen)"
-    $pullOk = $true
-    try { docker pull --quiet $script:Image 2>$null | Out-Null } catch { $pullOk = $false }
+    docker pull --quiet $script:Image 2>$null | Out-Null
+    $pullOk = ($LASTEXITCODE -eq 0)
     if (-not $pullOk) {
         Write-Warn2 "docker pull fehlgeschlagen fuer $script:Image"
         $imgExists = $false
