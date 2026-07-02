@@ -218,6 +218,95 @@ ensure_dirs() {
     chmod 700 "$SENITY_HOME"
 }
 
+# ---- Key-/Lizenz-Validierung gegen den Senity-Proxy -------------------------
+# Paritaet zu Test-SenityProxyKey in senity.ps1 (SDRv4-2444 / CLI-2429).
+# Setzt globale Variablen:
+#   PROXY_CHECK_VALID  (1 = Auth/Lizenz ok)
+#   PROXY_CHECK_STATUS (HTTP-Code, 0 = Netzwerkfehler/Check nicht moeglich)
+#   PROXY_CHECK_REASON (Meldung fuer Log/Fehlerausgabe)
+#   PROXY_CHECK_MODEL  (X-Senity-Model "<provider>/<model>", leer wenn unbekannt)
+check_senity_proxy_key() {
+    local url="$1" key="$2"
+    local endpoint="${url%/}/v1/messages"
+    local body='{"model":"claude-3-5-haiku-latest","max_tokens":1,"messages":[{"role":"user","content":"ping"}]}'
+    PROXY_CHECK_VALID=0
+    PROXY_CHECK_STATUS=0
+    PROXY_CHECK_REASON=""
+    PROXY_CHECK_MODEL=""
+
+    if ! command -v curl >/dev/null 2>&1; then
+        PROXY_CHECK_REASON="curl nicht gefunden, Key-Pruefung nicht moeglich"
+        return 0
+    fi
+
+    local hdr_file body_file
+    hdr_file="$(mktemp)" || return 0
+    body_file="$(mktemp)" || { rm -f "$hdr_file"; return 0; }
+
+    local sc rc=0
+    sc=$(curl -sS -o "$body_file" -D "$hdr_file" -w '%{http_code}' \
+        --max-time 45 -X POST "$endpoint" \
+        -H 'content-type: application/json' \
+        -H "x-api-key: $key" \
+        -H 'anthropic-version: 2023-06-01' \
+        --data "$body" 2>/dev/null) || rc=$?
+
+    if [[ $rc -ne 0 || -z "$sc" || "$sc" == "000" ]]; then
+        rm -f "$hdr_file" "$body_file"
+        PROXY_CHECK_REASON="Proxy nicht erreichbar: $endpoint"
+        return 0
+    fi
+
+    # Tatsaechlich geroutetes Modell aus dem Response-Header (CLI-2429)
+    PROXY_CHECK_MODEL=$(awk -F': *' 'tolower($1)=="x-senity-model" {gsub(/\r/,"",$2); print $2; exit}' "$hdr_file")
+    PROXY_CHECK_STATUS="$sc"
+
+    if [[ "$sc" == "401" || "$sc" == "403" ]]; then
+        local server_msg=""
+        if command -v python3 >/dev/null 2>&1; then
+            server_msg=$(python3 -c 'import json,sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(d.get("error", {}).get("message", ""))
+except Exception:
+    pass' "$body_file" 2>/dev/null)
+        fi
+        if [[ -z "$server_msg" ]]; then
+            server_msg=$(sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_file" | head -n1)
+        fi
+        PROXY_CHECK_REASON="${server_msg:-Key ungueltig (HTTP $sc)}"
+    elif [[ "$sc" == "404" ]]; then
+        PROXY_CHECK_REASON="Endpoint nicht gefunden (HTTP 404), Proxy-URL pruefen"
+    else
+        # 200 sowie 400/422/429/5xx: Auth + Lizenz-Gate wurden passiert
+        PROXY_CHECK_VALID=1
+        PROXY_CHECK_REASON="HTTP $sc"
+    fi
+    rm -f "$hdr_file" "$body_file"
+    return 0
+}
+
+# ---- Modell-Transparenz (CLI-2429, Plan 3.4) ---------------------------------
+# Der Proxy ignoriert das Client-Modell und routet ueber die cli_chat-Chain.
+# Erwartet wird qwen3.6; meldet der Header ein anderes Modell, wird der
+# Senity-Start geblockt (Server-Fallback-Chain pruefen). Fehlt der Header
+# (offline/Fehler), bleibt es beim fail-open mit Warnung.
+EXPECTED_SENITY_MODEL="qwen3.6"
+
+senity_model_gate() {
+    local model="$1"
+    if [[ -z "$model" ]]; then
+        warn "Modell: unbekannt (Proxy-Header X-Senity-Model nicht erhalten, $EXPECTED_SENITY_MODEL nicht verifizierbar)"
+        return 0
+    fi
+    log "Modell: $model"
+    if [[ "$model" != *"$EXPECTED_SENITY_MODEL"* ]]; then
+        err "Proxy routet aktuell auf '$model', erwartet war $EXPECTED_SENITY_MODEL."
+        err "Server-Fallback-Chain (cli_chat) im SDR pruefen. Start abgebrochen."
+        exit 1
+    fi
+}
+
 # ---- Login ------------------------------------------------------------------
 cmd_login() {
     ensure_dirs
@@ -241,6 +330,20 @@ cmd_login() {
 
     if [[ -z "$key" ]]; then
         err "Kein Key angegeben. Abbruch."
+        exit 1
+    fi
+
+    # Key + Lizenz gegen den Proxy pruefen (Paritaet zu senity.ps1, SDRv4-2444)
+    log "Pruefe Key und Senity-Code-Lizenz gegen $url ..."
+    check_senity_proxy_key "$url" "$key"
+    if [[ "$PROXY_CHECK_VALID" -eq 1 ]]; then
+        log "Key und Lizenz OK."
+        [[ -n "$PROXY_CHECK_MODEL" ]] && log "Modell: $PROXY_CHECK_MODEL"
+    elif [[ "$PROXY_CHECK_STATUS" == "0" ]]; then
+        warn "$PROXY_CHECK_REASON"
+        warn "Key konnte nicht geprueft werden, wird trotzdem gespeichert."
+    else
+        err "Key abgelehnt: $PROXY_CHECK_REASON"
         exit 1
     fi
 
@@ -441,6 +544,21 @@ load_env() {
     : "${SENITY_CHAT_PROXY_URL:=$DEFAULT_PROXY_URL}"
     if [[ -z "${SENITY_CHAT_PROXY_KEY:-}" ]]; then
         err "SENITY_CHAT_PROXY_KEY fehlt in $SENITY_ENV_FILE."
+        exit 1
+    fi
+
+    # Lizenz-Gate (SDRv4-2444) + Modell-Gate (CLI-2429), Paritaet zu Get-Env
+    # in senity.ps1: ungueltiger Key blockt den Start, offline = fail-open.
+    log "Pruefe Senity-Code-Lizenz ..."
+    check_senity_proxy_key "$SENITY_CHAT_PROXY_URL" "$SENITY_CHAT_PROXY_KEY"
+    if [[ "$PROXY_CHECK_VALID" -eq 1 ]]; then
+        senity_model_gate "$PROXY_CHECK_MODEL"
+    elif [[ "$PROXY_CHECK_STATUS" == "0" ]]; then
+        warn "$PROXY_CHECK_REASON"
+        warn "Lizenz-Pruefung uebersprungen (Proxy nicht erreichbar). Erste Anfrage schlaegt ggf. fehl."
+    else
+        err "Zugriff verweigert: $PROXY_CHECK_REASON"
+        err "Anderen Key hinterlegen mit: senity login"
         exit 1
     fi
 }

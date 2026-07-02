@@ -241,11 +241,13 @@ function Save-EnvFile([hashtable]$Data) {
 }
 
 # ---- Key-/Lizenz-Validierung gegen den Senity-Proxy -------------------------
-# Rueckgabe: @{ valid=$bool; status=<int>; reason=<string> }
+# Rueckgabe: @{ valid=$bool; status=<int>; reason=<string>; model=<string|$null> }
 # 401/403 liefern die Server-Meldung im Anthropic-Format (error.message),
 # z.B. die Lizenz-Ablehnung "Senity Code" (SDRv4-2444: fehlende, gesperrte
 # oder abgelaufene claude-code-Lizenz). status=0 bedeutet Netzwerkfehler,
 # der Key wurde dabei NICHT als ungueltig erkannt.
+# model: Inhalt des Response-Headers X-Senity-Model (tatsaechlich geroutetes
+# Modell "<provider>/<model>", CLI-2429). $null wenn der Header fehlt.
 function Test-SenityProxyKey([string]$Url, [string]$Key) {
     $endpoint = $Url.TrimEnd('/') + '/v1/messages'
     $body = '{"model":"claude-3-5-haiku-latest","max_tokens":1,"messages":[{"role":"user","content":"ping"}]}'
@@ -254,8 +256,14 @@ function Test-SenityProxyKey([string]$Url, [string]$Key) {
             -ContentType 'application/json' -TimeoutSec 45 -SkipHttpErrorCheck `
             -Headers @{ 'x-api-key' = $Key; 'anthropic-version' = '2023-06-01' }
     } catch {
-        return @{ valid = $false; status = 0; reason = "Proxy nicht erreichbar: $($_.Exception.Message)" }
+        return @{ valid = $false; status = 0; reason = "Proxy nicht erreichbar: $($_.Exception.Message)"; model = $null }
     }
+    $model = $null
+    try {
+        $headerVal = $resp.Headers['X-Senity-Model']
+        if ($headerVal) { $model = ([string[]]$headerVal)[0].Trim() }
+        if ($model -eq '') { $model = $null }
+    } catch {}
     $sc = [int]$resp.StatusCode
     if ($sc -eq 401 -or $sc -eq 403) {
         $serverMsg = $null
@@ -264,13 +272,33 @@ function Test-SenityProxyKey([string]$Url, [string]$Key) {
             if ($parsed.error -and $parsed.error.message) { $serverMsg = [string]$parsed.error.message }
         } catch {}
         $reason = if ($serverMsg) { $serverMsg } else { "Key ungueltig (HTTP $sc)" }
-        return @{ valid = $false; status = $sc; reason = $reason }
+        return @{ valid = $false; status = $sc; reason = $reason; model = $model }
     }
     if ($sc -eq 404) {
-        return @{ valid = $false; status = 404; reason = "Endpoint nicht gefunden (HTTP 404), Proxy-URL pruefen" }
+        return @{ valid = $false; status = 404; reason = "Endpoint nicht gefunden (HTTP 404), Proxy-URL pruefen"; model = $model }
     }
     # 200 sowie 400/422/429/5xx: Auth + Lizenz-Gate wurden passiert
-    return @{ valid = $true; status = $sc; reason = "HTTP $sc" }
+    return @{ valid = $true; status = $sc; reason = "HTTP $sc"; model = $model }
+}
+
+# ---- Modell-Transparenz (CLI-2429, Plan 3.4) ---------------------------------
+# Der Proxy ignoriert das Client-Modell und routet ueber die cli_chat-Chain.
+# Erwartet wird qwen3.6; meldet der Header ein anderes Modell, wird der
+# Senity-Start geblockt (Server-Fallback-Chain pruefen). Fehlt der Header
+# (offline/Fehler), bleibt es beim fail-open mit Warnung.
+$ExpectedSenityModel = "qwen3.6"
+
+function Test-SenityModelGate([string]$Model) {
+    if (-not $Model) {
+        Write-Warn2 "Modell: unbekannt (Proxy-Header X-Senity-Model nicht erhalten, $ExpectedSenityModel nicht verifizierbar)"
+        return
+    }
+    Write-Log "Modell: $Model"
+    if ($Model -notmatch [regex]::Escape($ExpectedSenityModel)) {
+        Write-Err2 "Proxy routet aktuell auf '$Model', erwartet war $ExpectedSenityModel."
+        Write-Err2 "Server-Fallback-Chain (cli_chat) im SDR pruefen. Start abgebrochen."
+        exit 1
+    }
 }
 
 function Invoke-Login {
@@ -301,6 +329,7 @@ function Invoke-Login {
         }
     } else {
         Write-Log "Key und Lizenz OK."
+        if ($check.model) { Write-Log "Modell: $($check.model)" }
     }
 
     Save-EnvFile @{ SENITY_CHAT_PROXY_URL = $url; SENITY_CHAT_PROXY_KEY = $key }
@@ -333,6 +362,9 @@ function Get-Env {
             exit 1
         }
     }
+    # Modell-Gate (CLI-2429): tatsaechlich geroutetes Modell anzeigen,
+    # Start bei bekanntem Fremdmodell blocken.
+    if ($check.status -ne 0) { Test-SenityModelGate $check.model }
     return $data
 }
 
