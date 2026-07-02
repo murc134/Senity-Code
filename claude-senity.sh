@@ -116,30 +116,43 @@ set_env_var() {
 
 # ── Senity-Key gegen Proxy validieren ──
 # Return-Codes: 0=valide, 1=invalide (401/403/404), 2=Netzwerkfehler
+# Bei 401/403 steht die Server-Meldung (Anthropic-Format error.message,
+# z.B. Lizenz-Ablehnung aus SDRv4-2444) in SENITY_KEY_ERROR_MSG.
+SENITY_KEY_ERROR_MSG=""
 validate_senity_key() {
     local url="$1"
     local key="$2"
     local endpoint="${url%/}/v1/messages"
     local body='{"model":"claude-3-5-haiku-latest","max_tokens":1,"messages":[{"role":"user","content":"ping"}]}'
-    local http_code
+    local http_code resp_file resp_body
 
+    SENITY_KEY_ERROR_MSG=""
     if ! command -v curl &>/dev/null; then
         write_warn "curl nicht verfuegbar, Key-Validierung uebersprungen."
         return 0
     fi
 
-    http_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+    resp_file="$(mktemp)"
+    http_code="$(curl -sS -o "$resp_file" -w '%{http_code}' \
         --max-time 45 \
         -X POST "$endpoint" \
         -H "Content-Type: application/json" \
         -H "x-api-key: $key" \
         -H "anthropic-version: 2023-06-01" \
         -d "$body" 2>/dev/null || echo "000")"
+    resp_body="$(cat "$resp_file" 2>/dev/null || true)"
+    rm -f "$resp_file"
 
     case "$http_code" in
         200|201) return 0 ;;
         400|422|429|500|502|503|504) return 0 ;;
-        401|403) return 1 ;;
+        401|403)
+            if command -v jq &>/dev/null; then
+                SENITY_KEY_ERROR_MSG="$(printf '%s' "$resp_body" | jq -r '.error.message // empty' 2>/dev/null || true)"
+            else
+                SENITY_KEY_ERROR_MSG="$(printf '%s' "$resp_body" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+            fi
+            return 1 ;;
         404)     return 1 ;;
         000)     return 2 ;;
         *)       return 1 ;;
@@ -520,7 +533,11 @@ if [[ "$AGENT_MODE" == "senity" ]]; then
             ;;
         1)
             attempts=$((attempts + 1))
-            write_fail "Key-Validierung fehlgeschlagen: Unauthorized / Endpoint nicht gefunden"
+            if [[ -n "${SENITY_KEY_ERROR_MSG:-}" ]]; then
+                write_fail "Key-Validierung fehlgeschlagen: ${SENITY_KEY_ERROR_MSG}"
+            else
+                write_fail "Key-Validierung fehlgeschlagen: Unauthorized / Endpoint nicht gefunden"
+            fi
             if [[ $attempts -ge $max_attempts ]]; then
                 exit_error "Nach $max_attempts Versuchen kein gueltiger Key. Abbruch."
             fi

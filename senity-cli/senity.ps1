@@ -240,6 +240,39 @@ function Save-EnvFile([hashtable]$Data) {
     Set-Content -Path $SenityEnvFile -Value $content -Encoding UTF8 -NoNewline
 }
 
+# ---- Key-/Lizenz-Validierung gegen den Senity-Proxy -------------------------
+# Rueckgabe: @{ valid=$bool; status=<int>; reason=<string> }
+# 401/403 liefern die Server-Meldung im Anthropic-Format (error.message),
+# z.B. die Lizenz-Ablehnung "Senity Code" (SDRv4-2444: fehlende, gesperrte
+# oder abgelaufene claude-code-Lizenz). status=0 bedeutet Netzwerkfehler,
+# der Key wurde dabei NICHT als ungueltig erkannt.
+function Test-SenityProxyKey([string]$Url, [string]$Key) {
+    $endpoint = $Url.TrimEnd('/') + '/v1/messages'
+    $body = '{"model":"claude-3-5-haiku-latest","max_tokens":1,"messages":[{"role":"user","content":"ping"}]}'
+    try {
+        $resp = Invoke-WebRequest -Uri $endpoint -Method Post -Body $body `
+            -ContentType 'application/json' -TimeoutSec 45 -SkipHttpErrorCheck `
+            -Headers @{ 'x-api-key' = $Key; 'anthropic-version' = '2023-06-01' }
+    } catch {
+        return @{ valid = $false; status = 0; reason = "Proxy nicht erreichbar: $($_.Exception.Message)" }
+    }
+    $sc = [int]$resp.StatusCode
+    if ($sc -eq 401 -or $sc -eq 403) {
+        $serverMsg = $null
+        try {
+            $parsed = $resp.Content | ConvertFrom-Json
+            if ($parsed.error -and $parsed.error.message) { $serverMsg = [string]$parsed.error.message }
+        } catch {}
+        $reason = if ($serverMsg) { $serverMsg } else { "Key ungueltig (HTTP $sc)" }
+        return @{ valid = $false; status = $sc; reason = $reason }
+    }
+    if ($sc -eq 404) {
+        return @{ valid = $false; status = 404; reason = "Endpoint nicht gefunden (HTTP 404), Proxy-URL pruefen" }
+    }
+    # 200 sowie 400/422/429/5xx: Auth + Lizenz-Gate wurden passiert
+    return @{ valid = $true; status = $sc; reason = "HTTP $sc" }
+}
+
 function Invoke-Login {
     Initialize-Dirs
     $existing = Read-EnvFile
@@ -256,6 +289,20 @@ function Invoke-Login {
         exit 1
     }
 
+    Write-Log "Pruefe Key und Senity-Code-Lizenz gegen $url ..."
+    $check = Test-SenityProxyKey -Url $url -Key $key
+    if (-not $check.valid) {
+        if ($check.status -eq 0) {
+            Write-Warn2 $check.reason
+            Write-Warn2 "Key konnte nicht geprueft werden, wird trotzdem gespeichert."
+        } else {
+            Write-Err2 "Key abgelehnt: $($check.reason)"
+            exit 1
+        }
+    } else {
+        Write-Log "Key und Lizenz OK."
+    }
+
     Save-EnvFile @{ SENITY_CHAT_PROXY_URL = $url; SENITY_CHAT_PROXY_KEY = $key }
     Write-Log "Konfiguration geschrieben nach $SenityEnvFile"
 }
@@ -270,6 +317,21 @@ function Get-Env {
     if (-not $data.SENITY_CHAT_PROXY_KEY) {
         Write-Err2 "SENITY_CHAT_PROXY_KEY fehlt in $SenityEnvFile."
         exit 1
+    }
+
+    # Lizenz-Gate (SDRv4-2444): ohne gueltige Senity-Code-Lizenz kein Start.
+    # Netzwerkfehler blocken nicht (Proxy prueft serverseitig ohnehin erneut).
+    Write-Log "Pruefe Senity-Code-Lizenz ..."
+    $check = Test-SenityProxyKey -Url $data.SENITY_CHAT_PROXY_URL -Key $data.SENITY_CHAT_PROXY_KEY
+    if (-not $check.valid) {
+        if ($check.status -eq 0) {
+            Write-Warn2 $check.reason
+            Write-Warn2 "Lizenz-Pruefung uebersprungen (Proxy nicht erreichbar). Die erste Anfrage schlaegt ggf. fehl."
+        } else {
+            Write-Err2 "Zugriff verweigert: $($check.reason)"
+            Write-Err2 "Anderen Key hinterlegen mit: senity login"
+            exit 1
+        }
     }
     return $data
 }

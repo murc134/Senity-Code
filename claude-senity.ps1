@@ -542,9 +542,20 @@ function Test-SenityKey {
             $we = $_.Exception
             if ($we.Response) {
                 $sc = [int]$we.Response.StatusCode
+                # Server-Meldung (Anthropic-Format error.message) extrahieren,
+                # z.B. Lizenz-Ablehnung "Senity Code" aus SDRv4-2444.
+                $serverMsg = $null
+                try {
+                    $reader   = New-Object System.IO.StreamReader($we.Response.GetResponseStream())
+                    $respBody = $reader.ReadToEnd()
+                    $reader.Close()
+                    $parsed = $respBody | ConvertFrom-Json
+                    if ($parsed.error -and $parsed.error.message) { $serverMsg = [string]$parsed.error.message }
+                } catch { }
                 $we.Response.Close()
                 if ($sc -eq 401 -or $sc -eq 403) {
-                    return @{ valid = $false; status = $sc; reason = "Unauthorized (HTTP $sc) - Key ungueltig" }
+                    $reason = if ($serverMsg) { "$serverMsg (HTTP $sc)" } else { "Unauthorized (HTTP $sc) - Key ungueltig" }
+                    return @{ valid = $false; status = $sc; reason = $reason }
                 } elseif ($sc -eq 404) {
                     return @{ valid = $false; status = $sc; reason = "Endpoint nicht gefunden (HTTP 404) - URL pruefen" }
                 } else {
