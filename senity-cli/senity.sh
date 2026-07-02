@@ -207,10 +207,25 @@ require_docker() {
         err "Docker ist nicht installiert. Siehe https://docs.docker.com/engine/install/"
         exit 1
     fi
-    if ! docker info >/dev/null 2>&1; then
-        err "Docker-Daemon laeuft nicht. Bitte Docker Desktop / dockerd starten."
+    if docker info >/dev/null 2>&1; then
+        return 0
+    fi
+    # Daemon laeuft nicht: auf macOS Docker Desktop best effort starten.
+    if [[ "$(uname -s)" == "Darwin" ]] && open -a Docker >/dev/null 2>&1; then
+        log "Docker-Daemon laeuft nicht. Starte Docker Desktop ..."
+        local deadline=$(( $(date +%s) + 120 ))
+        while (( $(date +%s) < deadline )); do
+            sleep 3
+            if docker info >/dev/null 2>&1; then
+                log "Docker-Daemon ist bereit."
+                return 0
+            fi
+        done
+        err "Docker-Daemon ist nach 120 s nicht erreichbar. Bitte Docker Desktop pruefen und 'senity' erneut aufrufen."
         exit 1
     fi
+    err "Docker-Daemon laeuft nicht. Bitte Docker Desktop / dockerd starten."
+    exit 1
 }
 
 ensure_dirs() {

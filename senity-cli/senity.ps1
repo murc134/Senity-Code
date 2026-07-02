@@ -206,15 +206,44 @@ $AgentLabel = Get-AgentLabel $AgentMode
 if (-not $Image) { $Image = $DefaultImage }
 
 # ---- Prerequisites ----------------------------------------------------------
+# Prueft ob der Docker-Daemon antwortet. Wichtig: "docker info" wirft bei
+# nicht laufendem Daemon KEINE PowerShell-Exception (nativer Exit-Code),
+# deshalb $LASTEXITCODE pruefen statt try/catch (Timos npipe-Fehler, CLI-2429).
+function Test-DockerDaemon {
+    docker info *>$null
+    return ($LASTEXITCODE -eq 0)
+}
+
 function Test-Docker {
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         Write-Err2 "Docker ist nicht installiert. Siehe https://docs.docker.com/desktop/install/windows-install/"
         exit 1
     }
-    try { docker info *>$null } catch {
-        Write-Err2 "Docker-Daemon laeuft nicht. Bitte Docker Desktop starten."
+    if (Test-DockerDaemon) { return }
+
+    # Daemon laeuft nicht: Docker Desktop best effort starten und warten.
+    $desktopExe = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
+    if (Test-Path $desktopExe) {
+        Write-Log "Docker-Daemon laeuft nicht. Starte Docker Desktop ..."
+        try { Start-Process -FilePath $desktopExe | Out-Null } catch {
+            Write-Err2 "Docker Desktop konnte nicht gestartet werden: $($_.Exception.Message)"
+            Write-Err2 "Bitte Docker Desktop manuell starten und 'senity' erneut aufrufen."
+            exit 1
+        }
+        $deadline = (Get-Date).AddSeconds(120)
+        while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 3
+            if (Test-DockerDaemon) {
+                Write-Log "Docker-Daemon ist bereit."
+                return
+            }
+        }
+        Write-Err2 "Docker-Daemon ist nach 120 s nicht erreichbar. Bitte Docker Desktop pruefen und 'senity' erneut aufrufen."
         exit 1
     }
+
+    Write-Err2 "Docker-Daemon laeuft nicht. Bitte Docker Desktop starten und 'senity' erneut aufrufen."
+    exit 1
 }
 
 function Initialize-Dirs {
